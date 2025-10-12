@@ -493,7 +493,7 @@ package {
 				_st += createShapeNode(obj,nodeName,_index,_parent_path)
 			}
 			
-			if (obj is DisplayObjectContainer /*&& _haveValue == false*/) {
+			if (obj is DisplayObjectContainer && _haveValue == false) {
 				var container:DisplayObjectContainer = DisplayObjectContainer(obj);
 				for (var i:int = 0; i < container.numChildren; i++) 
 				{
