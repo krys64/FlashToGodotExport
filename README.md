@@ -17,9 +17,9 @@ TODO:
 - Bug to be fixed regarding the sorting of clips in the scene.
 - Export for sprite3D.
 - Unique texture for images.
-
-Translated with DeepL.com (free version)
+- 
 -------------------------------------------------------------------------------------
+
 Ce projet permet la conversion d'animations Adobe Flash/Animate swf au format natif de Godot.
 
 Si vous avez Adobe/Animate, ouvrez le GodotExport.fla et compilez.
