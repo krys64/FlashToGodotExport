@@ -16,7 +16,6 @@ EXPORTING AN ANIMATION.
 TODO:
 - Bug to be fixed regarding the sorting of clips in the scene.
 - Export for sprite3D.
-- Unique texture for images.
   
 -------------------------------------------------------------------------------------
 
@@ -38,7 +37,6 @@ EXPORTER UNE ANIMATION.
 TODO :
 - Bug à régler sur le tri des clips dans la scène
 - Export pour les sprite3D
-- Texture unique pour les images.
 
 
 ![Capture](https://github.com/user-attachments/assets/a401fdb2-45c2-47a8-a508-48fd7f4d0eb5)
