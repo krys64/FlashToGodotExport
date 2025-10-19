@@ -54,6 +54,15 @@ package {
 		private var openFolderLabel:TextField;
 		private var conversionMsgContainer:Sprite;
 		private var errorMsg = '';
+		private const MAX_ATLAS_WIDTH:int = 2048;
+		private const MAX_ATLAS_HEIGHT:int = 2048;
+		private var marginXInput:TextField;
+		private var marginYInput:TextField;
+		private var marginContainer:Sprite;
+		private var atlasEnabledCheckbox:Sprite;
+		private var atlasEnabled:Boolean = false;
+		private var bitmapDataCache:Dictionary = new Dictionary();
+		private var atlasRects:Dictionary;
 		
 		public function GodotExport() {
 			if (File.desktopDirectory) {
@@ -63,6 +72,7 @@ package {
 				// === ZONE DE DROP ===
 				dropZone = createDropZone();
 				createOpenFolderButton();
+				createMarginInputs();
 				addChild(dropZone);
 
 				dropZone.addEventListener(NativeDragEvent.NATIVE_DRAG_ENTER, onDragEnter);
@@ -150,18 +160,14 @@ package {
 		}
 		
 		private function onSWFLoaded(e:Event):void {
-			start(e);
-			showConversionMessage();
-			return;
 			try {
 				start(e);
 				showConversionMessage();
 			} catch (error:Error) {
-				trace("⚠ Error during SWF processing: " + error.message);
-				showErrorMessage(error.message); // optionnel, si tu veux afficher un message à l'utilisateur
+				var fullError:String = "Error: " + error.message + "\n\nStack Trace:\n" + error.getStackTrace();
+				trace(fullError); // Keep tracing just in case
+				showErrorMessage(fullError);
 			}
-
-			trace('END OF PROCESS !!!');
 		}
 
 		public function start(e:Event)
@@ -272,6 +278,10 @@ package {
 
 			//----------------------------------
 			tscnContent += listHeader + '\n\n';
+
+			if (atlasEnabled) {
+				generateAtlas();
+			}
 			for each (var _tex:String in listTexture) {
 				tscnContent += _tex + '\n';
 			}
@@ -316,6 +326,126 @@ package {
 			fs.open(tscnFile, FileMode.WRITE);
 			fs.writeUTFBytes(tscnContent);
 			fs.close();
+		}
+
+		private function generateAtlas():void {
+			var keyCount:int = 0;
+			for (var key:String in bitmapDataCache) {
+				keyCount++;
+			}
+			if (keyCount == 0) {
+				return;
+			}
+
+			atlasRects = new Dictionary();
+			var atlases:Array = [];
+			
+			var currentAtlasIndex:int = 0;
+			var currentX:int = 0;
+			var currentY:int = 0;
+			var currentRowHeight:int = 0;
+
+			var createNewAtlas = function():void {
+				atlases.push(new BitmapData(MAX_ATLAS_WIDTH, MAX_ATLAS_HEIGHT, true, 0x00000000));
+				currentX = 0;
+				currentY = 0;
+				currentRowHeight = 0;
+			};
+
+			createNewAtlas();
+
+			for (var id:String in bitmapDataCache) {
+				var item:Object = bitmapDataCache[id];
+				var bd:BitmapData = item.bd;
+
+				if (currentX + bd.width > MAX_ATLAS_WIDTH) {
+					currentX = 0;
+					currentY += currentRowHeight;
+					currentRowHeight = 0;
+				}
+
+				if (currentY + bd.height > MAX_ATLAS_HEIGHT) {
+					currentAtlasIndex++;
+					createNewAtlas();
+				}
+
+				var atlas:BitmapData = atlases[currentAtlasIndex];
+				var destPoint:Point = new Point(currentX, currentY);
+				try {
+					bd.lock();
+					atlas.copyPixels(bd, bd.rect, destPoint);
+					bd.unlock();
+				} catch (e:Error) {
+					throw new Error("Failed during copyPixels in generateAtlas for texture ID '" + id + "'. Original error: " + e.message);
+				}
+
+				atlasRects[id] = {
+					rect: new Rectangle(currentX, currentY, bd.width, bd.height),
+					atlasIndex: currentAtlasIndex
+				};
+
+				currentX += bd.width;
+				if (bd.height > currentRowHeight) {
+					currentRowHeight = bd.height;
+				}
+			}
+
+			// --- Save atlases and create ExtResources ---
+			for (var i:int = 0; i < atlases.length; i++) {
+				var atlasBitmap:BitmapData = atlases[i];
+				var atlasPath:String = "textures/texture_atlas_" + i + ".png";
+				var file:File = outputFolder.resolvePath(atlasPath);
+				if (!file.parent.exists) file.parent.createDirectory();
+				
+				var fs:FileStream = new FileStream();
+				fs.open(file, FileMode.WRITE);
+				try {
+					fs.writeBytes(PNGEncoder.encode(atlasBitmap));
+				} catch (e:Error) {
+					throw new Error("Failed during PNGEncoder.encode in generateAtlas for atlas #" + i + ". Original error: " + e.message);
+				}
+				fs.close();
+
+				var atlasUUID:String = generateUID();
+				var atlasTexPath:String = outputFolderAnimSt + '/' + atlasPath;
+				var atlasID:String = "atlas_texture_" + i;
+				var atlasTex:String = '[ext_resource type="Texture2D" uid="uid://'+ atlasUUID +'" path="res://' + atlasTexPath + '" id="' + atlasID + '"]\n';
+				listTexture.push(atlasTex);
+			}
+
+			// --- Replace placeholders in node data ---
+			for each (var nodeData:NodeData in NodeData.allNodesData) {
+				for (var j:int = 0; j < nodeData.nodeList.length; j++) {
+					var nodeString:String = nodeData.nodeList[j];
+
+					// Replace texture placeholder
+					var textureRegex:RegExp = /texture = ATLAS_TEXTURE_PLACEHOLDER_FOR_ID_([a-zA-Z0-9_]+)/;
+					var textureMatch:Object = textureRegex.exec(nodeString);
+					if (textureMatch) {
+						var textureId:String = textureMatch[1];
+						if (textureId in atlasRects) {
+							var atlasInfo:Object = atlasRects[textureId];
+							var replacement:String = 'texture = ExtResource("atlas_texture_' + atlasInfo.atlasIndex + '")';
+							nodeString = nodeString.replace(textureMatch[0], replacement);
+						}
+					}
+
+					// Replace rect placeholder
+					var rectRegex:RegExp = /region_rect = ATLAS_RECT_PLACEHOLDER_FOR_ID_([a-zA-Z0-9_]+)/;
+					var rectMatch:Object = rectRegex.exec(nodeString);
+					if (rectMatch) {
+						var rectTextureId:String = rectMatch[1];
+						if (rectTextureId in atlasRects) {
+							var rectAtlasInfo:Object = atlasRects[rectTextureId];
+							var rect:Rectangle = rectAtlasInfo.rect;
+							var rectReplacement:String = "region_rect = Rect2(" + rect.x + ", " + rect.y + ", " + rect.width + ", " + rect.height + ")";
+							nodeString = nodeString.replace(rectMatch[0], rectReplacement);
+						}
+					}
+					
+					nodeData.nodeList[j] = nodeString;
+				}
+			}
 		}
 
 		private function showConvertingMessage():void {
@@ -546,6 +676,9 @@ package {
 			var _st : String = '';
 
 			var _idTex : String = exportSprite(obj, nodeName);
+			if (_idTex == null) {
+				return ""; // Don't create a node for an empty sprite
+			}
 			var _offset : String = '';
 			var _posX : int = _bounds.x;
 			var _posY : int = _bounds.y;
@@ -559,7 +692,14 @@ package {
 			_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n';
 			_st += 'scale = Vector2('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+')\n'
 			_st += 'flip_h = '+ (_scale.x < 0)+'\n';
-			_st += 'texture = ExtResource("'+ _idTex +'")\n'
+			if (atlasEnabled) {
+				_st += 'texture = ATLAS_TEXTURE_PLACEHOLDER_FOR_ID_' + _idTex + '\n';
+				_st += 'region_enabled = true\n';
+				_st += 'region_rect = ATLAS_RECT_PLACEHOLDER_FOR_ID_' + _idTex + '\n';
+			} else {
+				_st += 'texture = ExtResource("'+ _idTex +'")\n';
+			}
+
 
 			if(_posXFinal != 0 || _posYFinal != 0) {
 				//_offset = 'offset = Vector2('+_posXFinal+','+_posYFinal+')\n';
@@ -649,16 +789,44 @@ package {
 		}
 		
 		private function exportSprite(obj:DisplayObject,  nodeName:String):String {
+			var marginX:int = parseInt(marginXInput.text) || 0;
+			var marginY:int = parseInt(marginYInput.text) || 0;
+
 			var bounds:Rectangle = getRealBounds(obj);
-			var w:int = Math.max(1, Math.ceil(bounds.width));
-			var h:int = Math.max(1, Math.ceil(bounds.height));
+			var w:int = Math.max(1, Math.ceil(bounds.width)) + (marginX * 2);
+			var h:int = Math.max(1, Math.ceil(bounds.height)) + (marginY * 2);
+
+			if (w > 8191 || h > 8191) {
+				throw new Error("Object '" + nodeName + "' is too large to be exported. Its dimensions (" + w + "x" + h + ") exceed the maximum texture size of 8191px.");
+			}
+
+			if (atlasEnabled && (w > MAX_ATLAS_WIDTH || h > MAX_ATLAS_HEIGHT)) {
+				throw new Error("Object '" + nodeName + "' (" + w + "x" + h + ") is too large to fit in the texture atlas (max " + MAX_ATLAS_WIDTH + "x" + MAX_ATLAS_HEIGHT + "). Please disable the 'Single Texture' option or reduce the object's size.");
+			}
+
 			var _id : String = '';
 			
-			var bd:BitmapData = new BitmapData(w, h, true, 0x00000000);
-			var matrix:Matrix = new Matrix();
-			matrix.translate(-bounds.x, -bounds.y);
-			bd.draw(obj, matrix, null, null, null, true);
-			var _png:ByteArray = PNGEncoder.encode(bd);
+			var bd:BitmapData;
+			try {
+				bd = new BitmapData(w, h, true, 0x00000000);
+				var matrix:Matrix = new Matrix();
+				matrix.translate(-bounds.x + marginX, -bounds.y + marginY);
+				bd.draw(obj, matrix, null, null, null, true);
+			} catch (e:Error) {
+				throw new Error("Failed during BitmapData creation/draw in exportSprite for node '" + nodeName + "'. Original error: " + e.message);
+			}
+
+			// Check for empty bitmap
+			var colorBounds:Rectangle = bd.getColorBoundsRect(0xFF000000, 0x000000, false);
+			if (colorBounds == null) {
+				return null; // Return null for empty sprites
+			}
+			var _png:ByteArray;
+			try {
+				_png = PNGEncoder.encode(bd);
+			} catch (e:Error) {
+				throw new Error("Failed during PNGEncoder.encode in exportSprite for node '" + nodeName + "'. Original error: " + e.message);
+			}
 			var _pngSt : String = _png.toString();
 			
 			_id = textureID + '_' + generateUIDTex();
@@ -666,17 +834,21 @@ package {
 				_id = clipNameToTex[_pngSt];
 			} else {
 				clipNameToTex[_pngSt] = _id;
-				var _path : String = "textures/" + nodeName + ".png";
-				var file:File = outputFolder.resolvePath(_path);
-				if (!file.parent.exists) file.parent.createDirectory();
-				var fs:FileStream = new FileStream();
-				fs.open(file, FileMode.WRITE);
-				fs.writeBytes(_png);
-				fs.close();	
-				var _uuid : String = generateUID();
-				_path = outputFolderAnimSt+'/' +_path;
-				var _tex : String = '[ext_resource type="Texture2D" uid="uid://'+ _uuid+'" path="res://' + _path + '" id="' + _id + '"]\n';
-				listTexture.push(_tex);
+				if (atlasEnabled) {
+					bitmapDataCache[_id] = {bd: bd.clone(), nodeName: nodeName};
+				} else {
+					var _path : String = "textures/" + nodeName + ".png";
+					var file:File = outputFolder.resolvePath(_path);
+					if (!file.parent.exists) file.parent.createDirectory();
+					var fs:FileStream = new FileStream();
+					fs.open(file, FileMode.WRITE);
+					fs.writeBytes(_png);
+					fs.close();	
+					var _uuid : String = generateUID();
+					_path = outputFolderAnimSt+'/' +_path;
+					var _tex : String = '[ext_resource type="Texture2D" uid="uid://'+ _uuid+'" path="res://' + _path + '" id="' + _id + '"]\n';
+					listTexture.push(_tex);
+				}
 				textureID++;
 			}
 			return _id;
@@ -1157,6 +1329,111 @@ package {
 				outputFolder.openWithDefaultApplication();
 			} else {
 				trace("⚠ Aucun dossier d'export trouvé");
+			}
+		}
+
+		private function createMarginInputs():void {
+			marginContainer = new Sprite();
+			
+			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
+			labelFormat.bold = true;
+
+			var inputFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
+
+			// Texture Margin Label
+			var marginLabel:TextField = new TextField();
+			marginLabel.text = "Texture Margin:";
+			marginLabel.setTextFormat(labelFormat);
+			marginLabel.autoSize = "left";
+			marginLabel.x = 10;
+			marginLabel.y = 12;
+			marginContainer.addChild(marginLabel);
+			
+			// Margin X Input
+			marginXInput = new TextField();
+			marginXInput.type = "input";
+			marginXInput.border = true;
+			marginXInput.borderColor = 0xAAAAAA;
+			marginXInput.background = true;
+			marginXInput.backgroundColor = 0x333333;
+			marginXInput.width = 40;
+			marginXInput.height = 20;
+			marginXInput.text = "0";
+			marginXInput.restrict = "0-9";
+			marginXInput.defaultTextFormat = inputFormat;
+			marginXInput.setTextFormat(inputFormat);
+			marginXInput.x = marginLabel.x + marginLabel.width + 5;
+			marginXInput.y = 10;
+			marginContainer.addChild(marginXInput);
+			
+			// Margin Y Input
+			marginYInput = new TextField();
+			marginYInput.type = "input";
+			marginYInput.border = true;
+			marginYInput.borderColor = 0xAAAAAA;
+			marginYInput.background = true;
+			marginYInput.backgroundColor = 0x333333;
+			marginYInput.width = 40;
+			marginYInput.height = 20;
+			marginYInput.text = "0";
+			marginYInput.restrict = "0-9";
+			marginYInput.defaultTextFormat = inputFormat;
+			marginYInput.setTextFormat(inputFormat);
+			marginYInput.x = marginXInput.x + marginXInput.width + 5;
+			marginYInput.y = 10;
+			marginContainer.addChild(marginYInput);
+
+			// --- Atlas Checkbox ---
+			var atlasLabel:TextField = new TextField();
+			atlasLabel.text = "Single Texture";
+			atlasLabel.setTextFormat(labelFormat);
+			atlasLabel.autoSize = "left";
+			atlasLabel.x = marginYInput.x + marginYInput.width + 20;
+			atlasLabel.y = 12;
+			marginContainer.addChild(atlasLabel);
+
+			atlasEnabledCheckbox = new Sprite();
+			atlasEnabledCheckbox.graphics.lineStyle(1, 0xFFFFFF);
+			atlasEnabledCheckbox.graphics.beginFill(0x333333);
+			atlasEnabledCheckbox.graphics.drawRoundRect(0, 0, 16, 16, 4, 4);
+			atlasEnabledCheckbox.graphics.endFill();
+			atlasEnabledCheckbox.x = atlasLabel.x + atlasLabel.width + 5;
+			atlasEnabledCheckbox.y = 12;
+			atlasEnabledCheckbox.buttonMode = true;
+			atlasEnabledCheckbox.addEventListener(MouseEvent.CLICK, toggleAtlas);
+			marginContainer.addChild(atlasEnabledCheckbox);
+
+			var containerWidth:Number = atlasEnabledCheckbox.x + atlasEnabledCheckbox.width + 10;
+
+			marginContainer.graphics.beginFill(0x00008B); // Dark blue
+			marginContainer.graphics.drawRoundRect(0, 0, containerWidth, 40, 10, 10);
+			marginContainer.graphics.endFill();
+			
+			var totalWidth:Number = containerWidth + openFolderBtn.width + 10;
+			var startX:Number = (stage.stageWidth - totalWidth) / 2;
+			
+			marginContainer.x = startX;
+			marginContainer.y = openFolderBtn.y;
+			
+			openFolderBtn.x = startX + containerWidth + 10;
+			
+			addChild(marginContainer);
+		}
+
+		private function toggleAtlas(e:MouseEvent):void {
+			atlasEnabled = !atlasEnabled;
+			
+			atlasEnabledCheckbox.graphics.clear();
+			atlasEnabledCheckbox.graphics.lineStyle(1, 0xFFFFFF);
+			atlasEnabledCheckbox.graphics.beginFill(0x333333);
+			atlasEnabledCheckbox.graphics.drawRoundRect(0, 0, 16, 16, 4, 4);
+			atlasEnabledCheckbox.graphics.endFill();
+			
+			if (atlasEnabled) {
+				atlasEnabledCheckbox.graphics.lineStyle(2, 0xFFFFFF);
+				atlasEnabledCheckbox.graphics.moveTo(4, 8);
+				atlasEnabledCheckbox.graphics.lineTo(8, 12);
+				atlasEnabledCheckbox.graphics.lineTo(12, 4);
 			}
 		}
 
