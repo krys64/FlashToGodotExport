@@ -13,8 +13,8 @@ package {
 	import flash.utils.setTimeout;
 	
 	public class GodotExport extends Sprite {
-		private var _root:DisplayObjectContainer;
-		private var rootMovieClip:MovieClip;
+		public static var _root:DisplayObjectContainer;
+		public static var rootMovieClip:MovieClip;
 		private var swfLoader:Loader;
 		private var outputFolder:File;
 		
@@ -961,7 +961,8 @@ package {
 				['scaleX','scaleY'],
 				['rotation'],
 				//['alpha'],
-				['visible']
+				['visible'],
+                ['z_index']
 			] ;
 
 
@@ -970,7 +971,8 @@ package {
 				'scaleX,scaleY' : 'scale',
 				'rotation' : 'rotation',
 				'alpha' : 'alpha',
-				'visible' : 'visible'
+				'visible' : 'visible',
+				'z_index' : 'z_index'
 			}
 
 			var _inc : int = 0;
@@ -1182,6 +1184,16 @@ package {
 								positions.push(0);
 							}
 							break;
+
+						case 'z_index':
+							if (_currentFrameData && _currentFrameData.clip)
+							{
+								var godotZIndex = _currentFrameData.z_index;
+								positions.push(godotZIndex);
+							}else{
+								positions.push(0);
+							}
+							break;
 					
 						case 'x,y':
 							if (_currentFrameData && _currentFrameData.clip)
@@ -1223,8 +1235,6 @@ package {
 
 					frames.push(getTimeFromFrame(i));
 					transitions.push(1);
-
-					
 				}
 
 				_incFrame++;
@@ -1546,6 +1556,7 @@ internal class FrameData {
 	public var scaleY:Number;
 	public var rotation:Number;
 	public var alpha:Number;
+	public var z_index:int = 0;
 	public var visible:Boolean;
 	public var exists:Boolean;
 	public var width : Number;
@@ -1584,6 +1595,11 @@ internal class FrameData {
 				_datas.scaleX = Math.abs(_datas.scaleX);
 				_datas.scaleY = Math.abs(_datas.scaleY);
 			}
+
+            if(clip.parent != null && clip.parent == GodotExport.rootMovieClip)
+            {
+                this.z_index = clip.parent.getChildIndex(clip);
+            }
 
 			this.x = _datas.x;
 			this.y = _datas.y;
@@ -1652,7 +1668,7 @@ internal class TransitionDetector {
 	
 	public function getKeyframes():Dictionary 
 	{
-		var props:Array = ["x","y","scaleX","scaleY","rotation","alpha","visible","exists","width","height"];
+		var props:Array = ["x","y","scaleX","scaleY","rotation","alpha","visible","exists","width","height","z_index"];
 		var result:Dictionary = new Dictionary();
 
 		if (frameData.length == 0) return result;
@@ -1765,4 +1781,3 @@ internal class GodotExporter {
 		return output;
 	}
 }
-
