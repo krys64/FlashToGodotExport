@@ -1,4 +1,4 @@
-package {
+﻿package {
 	import com.adobe.images.PNGEncoder;
 	import flash.display.*;
 	import flash.events.*;
@@ -63,6 +63,12 @@ package {
 		private var atlasEnabled:Boolean = false;
 		private var bitmapDataCache:Dictionary = new Dictionary();
 		private var atlasRects:Dictionary;
+
+		private var exportDPI:Number = 72; // DPI pour l'export des textures
+		private var baseDPI:Number = 72; // DPI de base de Flash
+		private var dpiScaleFactor:Number = exportDPI / baseDPI; // Facteur d'échelle pour le DPI
+		
+		private var dpiInput:TextField;
 		
 		public function GodotExport() {
 			if (File.desktopDirectory) {
@@ -72,7 +78,7 @@ package {
 				// === ZONE DE DROP ===
 				dropZone = createDropZone();
 				createOpenFolderButton();
-				createMarginInputs();
+				createInputs();
 				addChild(dropZone);
 
 				dropZone.addEventListener(NativeDragEvent.NATIVE_DRAG_ENTER, onDragEnter);
@@ -82,6 +88,7 @@ package {
 				swfLoader.contentLoaderInfo.addEventListener(Event.COMPLETE, onSWFLoaded);
 
 				trace("Glissez-déposez un fichier SWF sur la fenêtre pour commencer...");
+				trace("DPI d'export configuré à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
 			} else {
 				trace("Erreur : Ce script nécessite Adobe AIR pour accéder au système de fichiers.");
 			}
@@ -114,7 +121,7 @@ package {
 			SceneData.currentSceneData = null;
 			SceneData.frameCounter  = 0;
 			NodeData.allNodesData = [];
-
+	
 
 
 			// 3. Réinitialiser les listes et dictionnaires
@@ -345,8 +352,11 @@ package {
 			var currentY:int = 0;
 			var currentRowHeight:int = 0;
 
+			var MAX_SAFE_ATLAS_SIZE:int = 4096;
+			var scaledAtlasWidth:int = Math.min(MAX_ATLAS_WIDTH , MAX_SAFE_ATLAS_SIZE);
+			var scaledAtlasHeight:int = Math.min(MAX_ATLAS_HEIGHT , MAX_SAFE_ATLAS_SIZE);
 			var createNewAtlas = function():void {
-				atlases.push(new BitmapData(MAX_ATLAS_WIDTH, MAX_ATLAS_HEIGHT, true, 0x00000000));
+				atlases.push(new BitmapData(scaledAtlasWidth, scaledAtlasHeight, true, 0x00000000));
 				currentX = 0;
 				currentY = 0;
 				currentRowHeight = 0;
@@ -357,36 +367,42 @@ package {
 			for (var id:String in bitmapDataCache) {
 				var item:Object = bitmapDataCache[id];
 				var bd:BitmapData = item.bd;
+				// Appliquer le facteur d'échelle DPI aux dimensions
+				var scaledWidth:int = bd.width * dpiScaleFactor;
+				var scaledHeight:int = bd.height * dpiScaleFactor;
 
-				if (currentX + bd.width > MAX_ATLAS_WIDTH) {
+				if (currentX + scaledWidth > scaledAtlasWidth) {
 					currentX = 0;
 					currentY += currentRowHeight;
 					currentRowHeight = 0;
 				}
 
-				if (currentY + bd.height > MAX_ATLAS_HEIGHT) {
+				if (currentY + scaledHeight > scaledAtlasHeight) {
 					currentAtlasIndex++;
 					createNewAtlas();
 				}
 
 				var atlas:BitmapData = atlases[currentAtlasIndex];
-				var destPoint:Point = new Point(currentX, currentY);
 				try {
 					bd.lock();
-					atlas.copyPixels(bd, bd.rect, destPoint);
+					// Créer une matrice de transformation pour le DPI et la position dans l'atlas
+					var matrix:Matrix = new Matrix();
+					matrix.scale(dpiScaleFactor, dpiScaleFactor);
+					matrix.translate(currentX, currentY);
+					atlas.draw(bd, matrix, null, null, null, true);
 					bd.unlock();
 				} catch (e:Error) {
-					throw new Error("Failed during copyPixels in generateAtlas for texture ID '" + id + "'. Original error: " + e.message);
+					throw new Error("Failed during draw in generateAtlas for texture ID '" + id + "'. Original error: " + e.message);
 				}
 
 				atlasRects[id] = {
-					rect: new Rectangle(currentX, currentY, bd.width, bd.height),
+					rect: new Rectangle(currentX, currentY, scaledWidth, scaledHeight),
 					atlasIndex: currentAtlasIndex
 				};
 
-				currentX += bd.width;
-				if (bd.height > currentRowHeight) {
-					currentRowHeight = bd.height;
+				currentX += scaledWidth;
+				if (scaledHeight > currentRowHeight) {
+					currentRowHeight = scaledHeight;
 				}
 			}
 
@@ -652,9 +668,11 @@ package {
 
 			var _scaleX = getSignedScale(obj).x;
 			var _scaleY = getSignedScale(obj).y;
-			
+			// Appliquer le facteur d'échelle DPI aux coordonnées
+			var posX = Math.ceil(obj.x * dpiScaleFactor);
+			var posY = Math.ceil(obj.y * dpiScaleFactor);
 			_st += '[node name="' + nodeName + '" type="Node2D" parent="' + _parent_path+'"]\n';
-			_st += 'position = Vector2('+Math.ceil(obj.x)+','+Math.ceil(obj.y)+')\n'
+			_st += 'position = Vector2('+posX+','+posY+')\n'
 			_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n'
 			_st += 'scale = '+ 'Vector2('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+')\n';
 			//_st += 'scale = Vector2('+Math.ceil(obj.scaleX)+','+Math.ceil(obj.scaleY)+')\n'
@@ -684,8 +702,8 @@ package {
 			var _posY : int = _bounds.y;
 			var _width : int = _bounds.width;
 			var _height : int = _bounds.height;
-			var _posXFinal : int = _posX + (_width/2);
-			var _posYFinal : int = _posY + (_height/2);
+			var _posXFinal : int = (_posX + (_width/2)) * dpiScaleFactor;
+			var _posYFinal : int = (_posY + (_height/2)) * dpiScaleFactor;
 
 			_st += '[node name="'+nodeName+'" type="Sprite2D" parent="' + _parent_path+'"]\n';
 			_st += 'position = Vector2('+Math.ceil(_posXFinal)+','+Math.ceil(_posYFinal)+')\n';
@@ -793,8 +811,9 @@ package {
 			var marginY:int = parseInt(marginYInput.text) || 0;
 
 			var bounds:Rectangle = getRealBounds(obj);
-			var w:int = Math.max(1, Math.ceil(bounds.width)) + (marginX * 2);
-			var h:int = Math.max(1, Math.ceil(bounds.height)) + (marginY * 2);
+			// Appliquer le facteur d'échelle DPI
+			var w:int = Math.max(1, Math.ceil(bounds.width * dpiScaleFactor)) + (marginX * 2);
+			var h:int = Math.max(1, Math.ceil(bounds.height * dpiScaleFactor)) + (marginY * 2);
 
 			if (w > 8191 || h > 8191) {
 				throw new Error("Object '" + nodeName + "' is too large to be exported. Its dimensions (" + w + "x" + h + ") exceed the maximum texture size of 8191px.");
@@ -810,7 +829,9 @@ package {
 			try {
 				bd = new BitmapData(w, h, true, 0x00000000);
 				var matrix:Matrix = new Matrix();
-				matrix.translate(-bounds.x + marginX, -bounds.y + marginY);
+				// Appliquer le facteur d'échelle DPI sur la matrice
+				matrix.scale(dpiScaleFactor, dpiScaleFactor);
+				matrix.translate(-bounds.x * dpiScaleFactor + marginX, -bounds.y * dpiScaleFactor + marginY);
 				bd.draw(obj, matrix, null, null, null, true);
 			} catch (e:Error) {
 				throw new Error("Failed during BitmapData creation/draw in exportSprite for node '" + nodeName + "'. Original error: " + e.message);
@@ -1017,6 +1038,15 @@ package {
 						{
 							var element : * = _dictData['values'][i];
 							if(element === 0) _dictData['values'][i] = '0.0';
+							// Appliquer le facteur d'échelle DPI pour scaleX et scaleY
+							if(_propArraySt == 'scaleX,scaleY') {
+								if(_dictData['values'][i] is Array && _dictData['values'][i].length == 2) {
+									_dictData['values'][i][0] = Number(_dictData['values'][i][0]) * dpiScaleFactor;
+									_dictData['values'][i][1] = Number(_dictData['values'][i][1]) * dpiScaleFactor;
+								} else if(_dictData['values'][i] is Number) {
+									_dictData['values'][i] = Number(_dictData['values'][i]) * dpiScaleFactor;
+								}
+							}
 						}
 
 						_data += 'tracks/'+ _inc +'/type = "value"\n'
@@ -1198,9 +1228,9 @@ package {
 						case 'x,y':
 							if (_currentFrameData && _currentFrameData.clip)
 							{
-								positions.push('Vector2('+Math.round(_currentFrameData.x)+','+Math.round(_currentFrameData.y)+')');
+								positions.push('Vector2(' + Math.round(_currentFrameData.x * dpiScaleFactor) + ',' + Math.round(_currentFrameData.y * dpiScaleFactor) + ')');
 							}else{
-								positions.push('Vector2('+0+','+0+')');
+								positions.push('Vector2(' + 0 + ',' + 0 + ')');
 							}
 							break;
 					
@@ -1296,7 +1326,7 @@ package {
 			
 			// Style du bouton
 			openFolderBtn.graphics.beginFill(0x00008B); // bleu foncé
-			openFolderBtn.graphics.drawRoundRect(0, 0, 200, 40, 10, 10);
+			openFolderBtn.graphics.drawRoundRect(0, 0, 200, 50, 10, 10);
 			openFolderBtn.graphics.endFill();
 
 			// Label du bouton
@@ -1342,7 +1372,7 @@ package {
 			}
 		}
 
-		private function createMarginInputs():void {
+		private function createInputs():void {
 			marginContainer = new Sprite();
 			
 			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
@@ -1415,17 +1445,44 @@ package {
 
 			var containerWidth:Number = atlasEnabledCheckbox.x + atlasEnabledCheckbox.width + 10;
 
+
+			var dpiLabel:TextField = new TextField();
+			dpiLabel.text = "DPI:";
+			dpiLabel.setTextFormat(labelFormat);
+			dpiLabel.autoSize = "left";
+			dpiLabel.x = atlasEnabledCheckbox.x + atlasEnabledCheckbox.width + 20;
+			dpiLabel.y = 12;
+			marginContainer.addChild(dpiLabel);
+
+			dpiInput = new TextField();
+			dpiInput.type = "input";
+			dpiInput.border = true;
+			dpiInput.borderColor = 0xAAAAAA;
+			dpiInput.background = true;
+			dpiInput.backgroundColor = 0x333333;
+			dpiInput.width = 40;
+			dpiInput.height = 20;
+			dpiInput.text = exportDPI.toString();
+			dpiInput.restrict = "0-9";
+			dpiInput.defaultTextFormat = inputFormat;
+			dpiInput.setTextFormat(inputFormat);
+			dpiInput.x = dpiLabel.x + dpiLabel.width + 5;
+			dpiInput.y = 10;
+			marginContainer.addChild(dpiInput);
+			dpiInput.addEventListener(Event.CHANGE, onDPIChange);
+
+			var containerDpiInputWidth:Number = dpiInput.x + dpiInput.width + 10;
 			marginContainer.graphics.beginFill(0x00008B); // Dark blue
-			marginContainer.graphics.drawRoundRect(0, 0, containerWidth, 40, 10, 10);
+			marginContainer.graphics.drawRoundRect(0, 0, containerDpiInputWidth, 50, 10, 10);
 			marginContainer.graphics.endFill();
 			
-			var totalWidth:Number = containerWidth + openFolderBtn.width + 10;
+			var totalWidth:Number = containerDpiInputWidth + openFolderBtn.width + 10;
 			var startX:Number = (stage.stageWidth - totalWidth) / 2;
 			
 			marginContainer.x = startX;
 			marginContainer.y = openFolderBtn.y;
 			
-			openFolderBtn.x = startX + containerWidth + 10;
+			openFolderBtn.x = startX + containerDpiInputWidth + 10;
 			
 			addChild(marginContainer);
 		}
@@ -1471,6 +1528,25 @@ package {
 				drawn += segment;
 				g.lineTo(x1 + Math.cos(angle) * drawn, y1 + Math.sin(angle) * drawn);
 				drawn += gapLength;
+			}
+		}
+
+		public function setExportDPI(newDPI:Number):void {
+			exportDPI = newDPI;
+			dpiScaleFactor = exportDPI / baseDPI;
+			trace("DPI d'export modifié à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
+		}
+
+		public function getExportDPI():Number {
+			return exportDPI;
+		}
+		
+		private function onDPIChange(e:Event):void {
+			var newDPI:int = parseInt(dpiInput.text);
+			if (newDPI > 0) {
+				exportDPI = newDPI;
+				dpiScaleFactor = exportDPI / baseDPI;
+				trace("DPI mis à jour : " + exportDPI + " (facteur d'échelle: " + dpiScaleFactor + ")");
 			}
 		}
 	}
