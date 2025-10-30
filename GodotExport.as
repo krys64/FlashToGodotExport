@@ -353,8 +353,8 @@
 			var currentRowHeight:int = 0;
 
 			var MAX_SAFE_ATLAS_SIZE:int = 4096;
-			var scaledAtlasWidth:int = Math.min(MAX_ATLAS_WIDTH * dpiScaleFactor, MAX_SAFE_ATLAS_SIZE);
-			var scaledAtlasHeight:int = Math.min(MAX_ATLAS_HEIGHT * dpiScaleFactor, MAX_SAFE_ATLAS_SIZE);
+			var scaledAtlasWidth:int = Math.min(MAX_ATLAS_WIDTH , MAX_SAFE_ATLAS_SIZE);
+			var scaledAtlasHeight:int = Math.min(MAX_ATLAS_HEIGHT , MAX_SAFE_ATLAS_SIZE);
 			var createNewAtlas = function():void {
 				atlases.push(new BitmapData(scaledAtlasWidth, scaledAtlasHeight, true, 0x00000000));
 				currentX = 0;
