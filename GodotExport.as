@@ -1,4 +1,4 @@
-package {
+﻿package {
 	import com.adobe.images.PNGEncoder;
 	import flash.display.*;
 	import flash.events.*;
@@ -11,6 +11,7 @@ package {
 	import flash.text.TextField;
 	import flash.text.TextFormat;
 	import flash.utils.setTimeout;
+	import flash.display.StageQuality;
 	
 	public class GodotExport extends Sprite {
 		public static var _root:DisplayObjectContainer;
@@ -63,6 +64,81 @@ package {
 		private var atlasEnabled:Boolean = false;
 		private var bitmapDataCache:Dictionary = new Dictionary();
 		private var atlasRects:Dictionary;
+		
+		// --- Quality knobs ---
+		private const EXPORT_SCALE:Number = 2.0;   // 1.0 = uit; 2.0 of 3.0 higher resolution sharper
+		private const ATLAS_PADDING:int = 2;       // 2px extrude rondom in atlas
+		
+		// Kopieer src naar out met padding + extruded edges (voor single textures)
+		private function extrudeBitmapEdges(src:BitmapData, padding:int = 2):BitmapData {
+			if (padding <= 0) return src.clone();
+
+			var out:BitmapData = new BitmapData(src.width + padding*2, src.height + padding*2, true, 0x00000000);
+			out.lock();
+
+			// 1) midden
+			out.copyPixels(src, src.rect, new Point(padding, padding));
+
+			// 2) randen (repliceer 1px strips)
+			for (var i:int = 1; i <= padding; i++) {
+				// top
+				out.copyPixels(src, new Rectangle(0, 0, src.width, 1), new Point(padding, padding - i));
+				// bottom
+				out.copyPixels(src, new Rectangle(0, src.height - 1, src.width, 1), new Point(padding, padding + src.height - 1 + i));
+				// left
+				out.copyPixels(src, new Rectangle(0, 0, 1, src.height), new Point(padding - i, padding));
+				// right
+				out.copyPixels(src, new Rectangle(src.width - 1, 0, 1, src.height), new Point(padding + src.width - 1 + i, padding));
+			}
+
+			// 3) hoeken (vul met hoekpixels)
+			var tl:uint = src.getPixel32(0, 0);
+			var tr:uint = src.getPixel32(src.width - 1, 0);
+			var bl:uint = src.getPixel32(0, src.height - 1);
+			var br:uint = src.getPixel32(src.width - 1, src.height - 1);
+
+			for (var y:int = 0; y < padding; y++) {
+				for (var x:int = 0; x < padding; x++) {
+					out.setPixel32(x, y, tl);                                                // top-left
+					out.setPixel32(out.width-1-x, y, tr);                                     // top-right
+					out.setPixel32(x, out.height-1-y, bl);                                    // bottom-left
+					out.setPixel32(out.width-1-x, out.height-1-y, br);                        // bottom-right
+				}
+			}
+
+			out.unlock();
+			return out;
+		}
+
+		// Schrijf bd in atlas op (dx,dy) en extrude randen in de atlasbuffer
+		private function blitWithExtrude(atlas:BitmapData, bd:BitmapData, dx:int, dy:int, padding:int = 2):void {
+			// midden
+			atlas.copyPixels(bd, bd.rect, new Point(dx, dy));
+
+			// randen
+			for (var i:int = 1; i <= padding; i++) {
+				atlas.copyPixels(bd, new Rectangle(0, 0, bd.width, 1), new Point(dx, dy - i));                                 // top
+				atlas.copyPixels(bd, new Rectangle(0, bd.height - 1, bd.width, 1), new Point(dx, dy + bd.height - 1 + i));     // bottom
+				atlas.copyPixels(bd, new Rectangle(0, 0, 1, bd.height), new Point(dx - i, dy));                                 // left
+				atlas.copyPixels(bd, new Rectangle(bd.width - 1, 0, 1, bd.height), new Point(dx + bd.width - 1 + i, dy));      // right
+			}
+
+			// hoeken
+			var tl:uint = bd.getPixel32(0, 0);
+			var tr:uint = bd.getPixel32(bd.width - 1, 0);
+			var bl:uint = bd.getPixel32(0, bd.height - 1);
+			var br:uint = bd.getPixel32(bd.width - 1, bd.height - 1);
+
+			for (var y:int = 0; y < padding; y++) {
+				for (var x:int = 0; x < padding; x++) {
+					atlas.setPixel32(dx - 1 - x, dy - 1 - y, tl);
+					atlas.setPixel32(dx + bd.width + x, dy - 1 - y, tr);
+					atlas.setPixel32(dx - 1 - x, dy + bd.height + y, bl);
+					atlas.setPixel32(dx + bd.width + x, dy + bd.height + y, br);
+				}
+			}
+		}
+
 		
 		public function GodotExport() {
 			if (File.desktopDirectory) {
@@ -327,25 +403,23 @@ package {
 			fs.writeUTFBytes(tscnContent);
 			fs.close();
 		}
-
 		private function generateAtlas():void {
+			// Count items in cache
 			var keyCount:int = 0;
-			for (var key:String in bitmapDataCache) {
-				keyCount++;
-			}
-			if (keyCount == 0) {
-				return;
-			}
+			for (var key:String in bitmapDataCache) keyCount++;
+			if (keyCount == 0) return;
 
 			atlasRects = new Dictionary();
 			var atlases:Array = [];
-			
+
 			var currentAtlasIndex:int = 0;
 			var currentX:int = 0;
 			var currentY:int = 0;
 			var currentRowHeight:int = 0;
 
-			var createNewAtlas = function():void {
+			var P:int = Math.max(0, ATLAS_PADDING); // padding around each sprite in the atlas
+
+			var createNewAtlas:Function = function():void {
 				atlases.push(new BitmapData(MAX_ATLAS_WIDTH, MAX_ATLAS_HEIGHT, true, 0x00000000));
 				currentX = 0;
 				currentY = 0;
@@ -358,36 +432,45 @@ package {
 				var item:Object = bitmapDataCache[id];
 				var bd:BitmapData = item.bd;
 
-				if (currentX + bd.width > MAX_ATLAS_WIDTH) {
+				// Space needed including padding (extrude area lives in padding)
+				var neededW:int = bd.width  + P * 2;
+				var neededH:int = bd.height + P * 2;
+
+				// Move to next row if needed
+				if (currentX + neededW > MAX_ATLAS_WIDTH) {
 					currentX = 0;
 					currentY += currentRowHeight;
 					currentRowHeight = 0;
 				}
 
-				if (currentY + bd.height > MAX_ATLAS_HEIGHT) {
+				// Need a new atlas?
+				if (currentY + neededH > MAX_ATLAS_HEIGHT) {
 					currentAtlasIndex++;
 					createNewAtlas();
 				}
 
 				var atlas:BitmapData = atlases[currentAtlasIndex];
-				var destPoint:Point = new Point(currentX, currentY);
+				var innerX:int = currentX + P; // where the actual image (without padding) begins
+				var innerY:int = currentY + P;
+
 				try {
 					bd.lock();
-					atlas.copyPixels(bd, bd.rect, destPoint);
+					// Blit with edge extrusion into atlas (fills padding area with replicated edge pixels)
+					blitWithExtrude(atlas, bd, innerX, innerY, P);
 					bd.unlock();
 				} catch (e:Error) {
-					throw new Error("Failed during copyPixels in generateAtlas for texture ID '" + id + "'. Original error: " + e.message);
+					throw new Error("Failed during blitWithExtrude in generateAtlas for texture ID '" + id + "'. Original error: " + e.message);
 				}
 
+				// Store only the inner rect (without padding) for Godot region_rect
 				atlasRects[id] = {
-					rect: new Rectangle(currentX, currentY, bd.width, bd.height),
+					rect: new Rectangle(innerX, innerY, bd.width, bd.height),
 					atlasIndex: currentAtlasIndex
 				};
 
-				currentX += bd.width;
-				if (bd.height > currentRowHeight) {
-					currentRowHeight = bd.height;
-				}
+				// Advance packing cursor
+				currentX += neededW;
+				if (neededH > currentRowHeight) currentRowHeight = neededH;
 			}
 
 			// --- Save atlases and create ExtResources ---
@@ -396,12 +479,13 @@ package {
 				var atlasPath:String = "textures/texture_atlas_" + i + ".png";
 				var file:File = outputFolder.resolvePath(atlasPath);
 				if (!file.parent.exists) file.parent.createDirectory();
-				
+
 				var fs:FileStream = new FileStream();
 				fs.open(file, FileMode.WRITE);
 				try {
 					fs.writeBytes(PNGEncoder.encode(atlasBitmap));
 				} catch (e:Error) {
+					fs.close();
 					throw new Error("Failed during PNGEncoder.encode in generateAtlas for atlas #" + i + ". Original error: " + e.message);
 				}
 				fs.close();
@@ -418,7 +502,7 @@ package {
 				for (var j:int = 0; j < nodeData.nodeList.length; j++) {
 					var nodeString:String = nodeData.nodeList[j];
 
-					// Replace texture placeholder
+					// texture placeholder -> atlas resource
 					var textureRegex:RegExp = /texture = ATLAS_TEXTURE_PLACEHOLDER_FOR_ID_([a-zA-Z0-9_]+)/;
 					var textureMatch:Object = textureRegex.exec(nodeString);
 					if (textureMatch) {
@@ -430,23 +514,24 @@ package {
 						}
 					}
 
-					// Replace rect placeholder
+					// region placeholder -> inner rect (without padding)
 					var rectRegex:RegExp = /region_rect = ATLAS_RECT_PLACEHOLDER_FOR_ID_([a-zA-Z0-9_]+)/;
 					var rectMatch:Object = rectRegex.exec(nodeString);
 					if (rectMatch) {
 						var rectTextureId:String = rectMatch[1];
 						if (rectTextureId in atlasRects) {
 							var rectAtlasInfo:Object = atlasRects[rectTextureId];
-							var rect:Rectangle = rectAtlasInfo.rect;
-							var rectReplacement:String = "region_rect = Rect2(" + rect.x + ", " + rect.y + ", " + rect.width + ", " + rect.height + ")";
+							var r:Rectangle = rectAtlasInfo.rect;
+							var rectReplacement:String = "region_rect = Rect2(" + r.x + ", " + r.y + ", " + r.width + ", " + r.height + ")";
 							nodeString = nodeString.replace(rectMatch[0], rectReplacement);
 						}
 					}
-					
+
 					nodeData.nodeList[j] = nodeString;
 				}
 			}
 		}
+
 
 		private function showConvertingMessage():void {
 			// Supprimer ancien message s'il existe
@@ -690,7 +775,7 @@ package {
 			_st += '[node name="'+nodeName+'" type="Sprite2D" parent="' + _parent_path+'"]\n';
 			_st += 'position = Vector2('+Math.ceil(_posXFinal)+','+Math.ceil(_posYFinal)+')\n';
 			_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n';
-			_st += 'scale = Vector2('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+')\n'
+			_st += 'scale = Vector2('+ (Math.abs(_scale.x)/EXPORT_SCALE) +','+ (Math.abs(_scale.y)/EXPORT_SCALE) +')\n';
 			_st += 'flip_h = '+ (_scale.x < 0)+'\n';
 			if (atlasEnabled) {
 				_st += 'texture = ATLAS_TEXTURE_PLACEHOLDER_FOR_ID_' + _idTex + '\n';
@@ -788,71 +873,107 @@ package {
 			return _bool;
 		}
 		
-		private function exportSprite(obj:DisplayObject,  nodeName:String):String {
-			var marginX:int = parseInt(marginXInput.text) || 0;
-			var marginY:int = parseInt(marginYInput.text) || 0;
+		private function exportSprite(obj:DisplayObject, nodeName:String):String {
+			// UI margins
+			var uiMarginX:int = parseInt(marginXInput.text) || 0;
+			var uiMarginY:int = parseInt(marginYInput.text) || 0;
 
+			// Voor single textures willen we altijd wat extra ruimte voor bleed
+			var padX:int = uiMarginX + (atlasEnabled ? 0 : ATLAS_PADDING);
+			var padY:int = uiMarginY + (atlasEnabled ? 0 : ATLAS_PADDING);
+
+			// Nauwkeurige bounds in local space
 			var bounds:Rectangle = getRealBounds(obj);
-			var w:int = Math.max(1, Math.ceil(bounds.width)) + (marginX * 2);
-			var h:int = Math.max(1, Math.ceil(bounds.height)) + (marginY * 2);
 
-			if (w > 8191 || h > 8191) {
-				throw new Error("Object '" + nodeName + "' is too large to be exported. Its dimensions (" + w + "x" + h + ") exceed the maximum texture size of 8191px.");
+			// Supersampling: render groter, daarna in Godot weer kleiner schalen (zie createShapeNode patch)
+			var renderW:int = Math.max(1, Math.ceil(bounds.width  * EXPORT_SCALE)) + (padX * 2);
+			var renderH:int = Math.max(1, Math.ceil(bounds.height * EXPORT_SCALE)) + (padY * 2);
+
+			if (renderW > 8191 || renderH > 8191) {
+				throw new Error("Object '" + nodeName + "' is too large to be exported at this scale (" + renderW + "x" + renderH + ").");
+			}
+			if (atlasEnabled && (renderW > MAX_ATLAS_WIDTH || renderH > MAX_ATLAS_HEIGHT)) {
+				throw new Error("Object '" + nodeName + "' (" + renderW + "x" + renderH + ") is too large for the atlas.");
 			}
 
-			if (atlasEnabled && (w > MAX_ATLAS_WIDTH || h > MAX_ATLAS_HEIGHT)) {
-				throw new Error("Object '" + nodeName + "' (" + w + "x" + h + ") is too large to fit in the texture atlas (max " + MAX_ATLAS_WIDTH + "x" + MAX_ATLAS_HEIGHT + "). Please disable the 'Single Texture' option or reduce the object's size.");
-			}
-
-			var _id : String = '';
-			
+			var id:String = '';
 			var bd:BitmapData;
+
 			try {
-				bd = new BitmapData(w, h, true, 0x00000000);
-				var matrix:Matrix = new Matrix();
-				matrix.translate(-bounds.x + marginX, -bounds.y + marginY);
-				bd.draw(obj, matrix, null, null, null, true);
+				bd = new BitmapData(renderW, renderH, true, 0x00000000);
+
+				// Tekenen met BEST kwaliteit + pixelsnapping
+				var oldQ:String = stage ? stage.quality : null;
+				if (stage) stage.quality = StageQuality.BEST;
+
+				var m:Matrix = new Matrix();
+				// centreer het object in de bitmap
+				m.translate(-bounds.x, -bounds.y);
+				m.scale(EXPORT_SCALE, EXPORT_SCALE);
+				m.translate(padX, padY);
+
+				// pixel snap de vertaling om “softere” randen door subpixels te voorkomen
+				m.tx = Math.round(m.tx);
+				m.ty = Math.round(m.ty);
+
+				bd.draw(obj, m, null, null, null, true); // smoothing=true is ok; StageQuality doet het antialias-werk voor vector
+
+				if (stage && oldQ) stage.quality = oldQ;
 			} catch (e:Error) {
-				throw new Error("Failed during BitmapData creation/draw in exportSprite for node '" + nodeName + "'. Original error: " + e.message);
+				throw new Error("Failed during BitmapData draw in exportSprite for node '" + nodeName + "'. " + e.message);
 			}
 
-			// Check for empty bitmap
+			// Lege bitmap skippen
 			var colorBounds:Rectangle = bd.getColorBoundsRect(0xFF000000, 0x000000, false);
-			if (colorBounds == null) {
-				return null; // Return null for empty sprites
+			if (colorBounds == null || colorBounds.isEmpty()) {
+				return null;
 			}
-			var _png:ByteArray;
+
+			// Cache-dedupe op content
+			var pngBytes:ByteArray;
+			var writeBD:BitmapData = bd;
+
+			// Voor single textures meteen extrude-bleed toevoegen (atlas doet dat later in generateAtlas)
+			if (!atlasEnabled && ATLAS_PADDING > 0) {
+				writeBD = extrudeBitmapEdges(bd, ATLAS_PADDING);
+			}
+
 			try {
-				_png = PNGEncoder.encode(bd);
+				pngBytes = PNGEncoder.encode(writeBD);
 			} catch (e:Error) {
-				throw new Error("Failed during PNGEncoder.encode in exportSprite for node '" + nodeName + "'. Original error: " + e.message);
+				throw new Error("Failed during PNGEncoder.encode in exportSprite for node '" + nodeName + "'. " + e.message);
 			}
-			var _pngSt : String = _png.toString();
-			
-			_id = textureID + '_' + generateUIDTex();
-			if(clipNameToTex.hasOwnProperty(_pngSt) == true) {
-				_id = clipNameToTex[_pngSt];
+			var pngKey:String = pngBytes.toString();
+
+			id = textureID + '_' + generateUIDTex();
+			if (clipNameToTex.hasOwnProperty(pngKey)) {
+				id = clipNameToTex[pngKey];
 			} else {
-				clipNameToTex[_pngSt] = _id;
+				clipNameToTex[pngKey] = id;
+
 				if (atlasEnabled) {
-					bitmapDataCache[_id] = {bd: bd.clone(), nodeName: nodeName};
+					// In atlasmodus bewaren we de strakke (niet-ge-extrude) bd, extrude gebeurt in generateAtlas()
+					bitmapDataCache[id] = { bd: bd.clone(), nodeName: nodeName };
 				} else {
-					var _path : String = "textures/" + nodeName + ".png";
-					var file:File = outputFolder.resolvePath(_path);
+					var path:String = "textures/" + nodeName + ".png";
+					var file:File = outputFolder.resolvePath(path);
 					if (!file.parent.exists) file.parent.createDirectory();
+
 					var fs:FileStream = new FileStream();
 					fs.open(file, FileMode.WRITE);
-					fs.writeBytes(_png);
-					fs.close();	
-					var _uuid : String = generateUID();
-					_path = outputFolderAnimSt+'/' +_path;
-					var _tex : String = '[ext_resource type="Texture2D" uid="uid://'+ _uuid+'" path="res://' + _path + '" id="' + _id + '"]\n';
-					listTexture.push(_tex);
+					fs.writeBytes(pngBytes);
+					fs.close();
+
+					var uuid:String = generateUID();
+					path = outputFolderAnimSt + '/' + path;
+					var tex:String = '[ext_resource type="Texture2D" uid="uid://' + uuid + '" path="res://' + path + '" id="' + id + '"]\n';
+					listTexture.push(tex);
 				}
 				textureID++;
 			}
-			return _id;
+			return id;
 		}
+
 		
 		public static function getRealBounds(obj:DisplayObject):Rectangle {
 			var bounds:Rectangle = obj.getBounds(obj);
