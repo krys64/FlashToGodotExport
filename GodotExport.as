@@ -1,4 +1,4 @@
-package {
+﻿package {
 	import com.adobe.images.PNGEncoder;
 	import flash.display.*;
 	import flash.events.*;
@@ -120,6 +120,7 @@ package {
 				swfLoader.contentLoaderInfo.addEventListener(Event.COMPLETE, onSWFLoaded);
 
 				trace("Glissez-déposez un fichier SWF sur la fenêtre pour commencer...");
+				trace("DPI d'export configuré à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
 			} else {
 				trace("Erreur : Ce script nécessite Adobe AIR pour accéder au système de fichiers.");
 			}
@@ -152,7 +153,7 @@ package {
 			SceneData.currentSceneData = null;
 			SceneData.frameCounter  = 0;
 			NodeData.allNodesData = [];
-
+	
 
 
 			// 3. Réinitialiser les listes et dictionnaires
@@ -396,8 +397,11 @@ package {
 			var currentY:int = 0;
 			var currentRowHeight:int = 0;
 
+			var MAX_SAFE_ATLAS_SIZE:int = 4096;
+			var scaledAtlasWidth:int = Math.min(MAX_ATLAS_WIDTH , MAX_SAFE_ATLAS_SIZE);
+			var scaledAtlasHeight:int = Math.min(MAX_ATLAS_HEIGHT , MAX_SAFE_ATLAS_SIZE);
 			var createNewAtlas = function():void {
-				atlases.push(new BitmapData(MAX_ATLAS_WIDTH, MAX_ATLAS_HEIGHT, true, 0x00000000));
+				atlases.push(new BitmapData(scaledAtlasWidth, scaledAtlasHeight, true, 0x00000000));
 				currentX = 0;
 				currentY = 0;
 				currentRowHeight = 0;
@@ -1141,6 +1145,15 @@ package {
 						{
 							var element : * = _dictData['values'][i];
 							if(element === 0) _dictData['values'][i] = '0.0';
+							// Appliquer le facteur d'échelle DPI pour scaleX et scaleY
+							if(_propArraySt == 'scaleX,scaleY') {
+								if(_dictData['values'][i] is Array && _dictData['values'][i].length == 2) {
+									_dictData['values'][i][0] = Number(_dictData['values'][i][0]) * dpiScaleFactor;
+									_dictData['values'][i][1] = Number(_dictData['values'][i][1]) * dpiScaleFactor;
+								} else if(_dictData['values'][i] is Number) {
+									_dictData['values'][i] = Number(_dictData['values'][i]) * dpiScaleFactor;
+								}
+							}
 						}
 
 						_data += 'tracks/'+ _inc +'/type = "value"\n'
@@ -1510,7 +1523,7 @@ package {
 			
 			// Style du bouton
 			openFolderBtn.graphics.beginFill(0x00008B); // bleu foncé
-			openFolderBtn.graphics.drawRoundRect(0, 0, 200, 40, 10, 10);
+			openFolderBtn.graphics.drawRoundRect(0, 0, 200, 50, 10, 10);
 			openFolderBtn.graphics.endFill();
 
 			// Label du bouton
@@ -1554,7 +1567,7 @@ package {
 			}
 		}
 
-		private function createMarginInputs():void {
+		private function createInputs():void {
 			marginContainer = new Sprite();
 			
 			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
@@ -1810,6 +1823,25 @@ package {
 				drawn += segment;
 				g.lineTo(x1 + Math.cos(angle) * drawn, y1 + Math.sin(angle) * drawn);
 				drawn += gapLength;
+			}
+		}
+
+		public function setExportDPI(newDPI:Number):void {
+			exportDPI = newDPI;
+			dpiScaleFactor = exportDPI / baseDPI;
+			trace("DPI d'export modifié à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
+		}
+
+		public function getExportDPI():Number {
+			return exportDPI;
+		}
+		
+		private function onDPIChange(e:Event):void {
+			var newDPI:int = parseInt(dpiInput.text);
+			if (newDPI > 0) {
+				exportDPI = newDPI;
+				dpiScaleFactor = exportDPI / baseDPI;
+				trace("DPI mis à jour : " + exportDPI + " (facteur d'échelle: " + dpiScaleFactor + ")");
 			}
 		}
 	}
