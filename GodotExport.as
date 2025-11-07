@@ -71,6 +71,8 @@ package {
 		private var exportDPI:Number = 72; // DPI pour l'export des textures
 		private var baseDPI:Number = 72; // DPI de base de Flash
 		private var dpiScaleFactor:Number = exportDPI / baseDPI; // Facteur d'échelle pour le DPI
+
+		public static var z_spriteSpace = 0.02;
 		
 		private var dpiInput:TextField;
 		
@@ -280,9 +282,9 @@ package {
 			//-----------------------------------------------------------
 			listHeader = '[gd_scene load_steps=1 format=3 uid=\"uid://' + generateUID() + '\"]\n';
 			if (sprite3DEnabled) {
-				listNode.push('[node name="root_clip" type="Node3D"]\n\n');
+				listNode.push('[node name="' + outputFolderAnimSt + '" type="Node3D"]\n\n');
 			} else {
-				listNode.push('[node name="root_clip" type="Node2D"]\n\n');
+				listNode.push('[node name="' + outputFolderAnimSt + '" type="Node2D"]\n\n');
 			}
 			listAnimationLibrary = 'AnimationLibrary_' + generateUIDTex();
 			listAnimationPlayer = '[node name="AnimationPlayer" type="AnimationPlayer" parent="."]\nlibraries = {\n&"": SubResource("'+listAnimationLibrary+'")\n}\n';
@@ -719,12 +721,24 @@ package {
 			{
 				_scaleZ = -1;
 			}
-			
-			if (sprite3DEnabled) {
+
+			var _z = obj.parent.getChildIndex(obj)+1;
+
+			if(obj.parent == GodotExport.rootMovieClip)
+            {
+				_z = obj.parent.getChildIndex(obj) * z_spriteSpace * dpiScaleFactor;
+            }
+			else
+			{
+				_z =  _z * z_spriteSpace * dpiScaleFactor * 0.01;
+			}
+
+			if (sprite3DEnabled) 
+			{
 				_st += '[node name="' + nodeName + '" type="Node3D" parent="' + _parent_path+'"]\n';
-				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER* dpiScaleFactor)+','+(-obj.y / PIXELS_PER_METER* dpiScaleFactor)+','+ (obj.parent.getChildIndex(obj)+1) * 0.02 * dpiScaleFactor +')\n'
+				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER* dpiScaleFactor)+','+(-obj.y / PIXELS_PER_METER * dpiScaleFactor)+','+ _z +')\n';
 				_st += 'rotation = Vector3(0, 0, '+ (-GodotExport.getTrueRotationRadians(obj)) +')\n'
-				_st += 'scale = Vector3('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+','+_scaleZ+')\n';
+				_st += 'scale = Vector3('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+',1)\n';
 			} else {
 				_st += '[node name="' + nodeName + '" type="Node2D" parent="' + _parent_path+'"]\n';
 				_st += 'position = Vector2('+Math.ceil(obj.x * dpiScaleFactor)+','+Math.ceil(obj.y * dpiScaleFactor)+')\n'
@@ -771,12 +785,23 @@ package {
 				_scaleZ = -1;
 			}
 
+			var _z = obj.parent.getChildIndex(obj)+1;
+
+			if(obj.parent == GodotExport.rootMovieClip)
+            {
+				_z = obj.parent.getChildIndex(obj) * z_spriteSpace * dpiScaleFactor;
+            }
+			else
+			{
+				_z =  _z * z_spriteSpace * dpiScaleFactor * 0.1;
+			}
+
 			
 			if (sprite3DEnabled) {
 				_st += '[node name="'+nodeName+'" type="Sprite3D" parent="' + _parent_path+'"]\n';
-				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+  ','+ 0.02 * dpiScaleFactor +')\n'
+				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+  ','+ _z +')\n'
 				_st += 'rotation = Vector3(0, 0, '+ GodotExport.getTrueRotationRadians(obj) +')\n';
-				_st += 'scale = Vector3('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+','+_scaleZ+')\n';
+				_st += 'scale = Vector3('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+','+ _scaleZ +')\n';
 				//_st += 'shaded = true\n';
 			} else {
 				_st += '[node name="'+nodeName+'" type="Sprite2D" parent="' + _parent_path+'"]\n';
@@ -1393,7 +1418,7 @@ package {
 							if (_currentFrameData && _currentFrameData.clip)
 							{
 								if (sprite3DEnabled) {
-									positions.push(_currentFrameData.z / PIXELS_PER_METER * dpiScaleFactor*5);
+									positions.push(_currentFrameData.z  * dpiScaleFactor * z_spriteSpace);
 								}
 							}else{
 								if (sprite3DEnabled) {
