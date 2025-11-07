@@ -1,4 +1,4 @@
-﻿package {
+package {
 	import com.adobe.images.PNGEncoder;
 	import flash.display.*;
 	import flash.events.*;
@@ -39,6 +39,7 @@
 		private var currentScene : Scene;
 		
 		private var clipNameToTex : Dictionary = new Dictionary();
+		private var clipTypes:Dictionary = new Dictionary();
 		private var pngToName : Dictionary = new Dictionary();
 		
 		private var outputFolderSt :String = "exportSwf";
@@ -56,11 +57,14 @@
 		private var errorMsg = '';
 		private const MAX_ATLAS_WIDTH:int = 2048;
 		private const MAX_ATLAS_HEIGHT:int = 2048;
+		private const PIXELS_PER_METER:Number = 100.0;
 		private var marginXInput:TextField;
 		private var marginYInput:TextField;
 		private var marginContainer:Sprite;
 		private var atlasEnabledCheckbox:Sprite;
 		private var atlasEnabled:Boolean = false;
+		private var sprite3DEnabledCheckbox:Sprite;
+		private var sprite3DEnabled:Boolean = false;
 		private var bitmapDataCache:Dictionary = new Dictionary();
 		private var atlasRects:Dictionary;
 
@@ -77,9 +81,37 @@
 
 				// === ZONE DE DROP ===
 				dropZone = createDropZone();
-				createOpenFolderButton();
-				createInputs();
-				addChild(dropZone);
+				addChild(dropZone); // Add dropZone here
+
+				// === OPTIONS PANEL ===
+				createMarginInputs(); // Creates marginContainer
+				var atlasOptionContainer:Sprite = createAtlasOption(); // Creates atlasContainer
+				var sprite3DOptionContainer:Sprite = create3DOption();
+				var dpiOptionContainer:Sprite = createDPIOption();
+				createOpenFolderButton(); // Creates openFolderBtn
+
+				// Position the option elements
+				var leftPanelX:int = 20;
+				var currentY:int = 50;
+
+				marginContainer.x = leftPanelX;
+				marginContainer.y = currentY;
+				currentY += marginContainer.height + 10;
+
+				atlasOptionContainer.x = leftPanelX;
+				atlasOptionContainer.y = currentY;
+				currentY += atlasOptionContainer.height + 10;
+
+				sprite3DOptionContainer.x = leftPanelX;
+				sprite3DOptionContainer.y = currentY;
+				currentY += sprite3DOptionContainer.height + 10;
+
+				dpiOptionContainer.x = leftPanelX;
+				dpiOptionContainer.y = currentY;
+				currentY += dpiOptionContainer.height + 10;
+
+				openFolderBtn.x = leftPanelX;
+				openFolderBtn.y = currentY;
 
 				dropZone.addEventListener(NativeDragEvent.NATIVE_DRAG_ENTER, onDragEnter);
 				dropZone.addEventListener(NativeDragEvent.NATIVE_DRAG_DROP, onDragDrop);
@@ -88,7 +120,6 @@
 				swfLoader.contentLoaderInfo.addEventListener(Event.COMPLETE, onSWFLoaded);
 
 				trace("Glissez-déposez un fichier SWF sur la fenêtre pour commencer...");
-				trace("DPI d'export configuré à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
 			} else {
 				trace("Erreur : Ce script nécessite Adobe AIR pour accéder au système de fichiers.");
 			}
@@ -121,10 +152,11 @@
 			SceneData.currentSceneData = null;
 			SceneData.frameCounter  = 0;
 			NodeData.allNodesData = [];
-	
+
 
 
 			// 3. Réinitialiser les listes et dictionnaires
+			bitmapDataCache = new Dictionary();
 			errorMsg = '';
 			listHeader = '';
 			listTexture = [];
@@ -140,6 +172,7 @@
 			textureID = 1;
 			animationID = 1;
 			textureUIDs = {};
+			clipTypes = new Dictionary();
 			clipNameToTex = new Dictionary();
 			pngToName = new Dictionary();
 			for each (var td:TransitionDetector in dictTransitionDetectors) {
@@ -216,7 +249,7 @@
 			if (!swfMask) {
 				swfMask = new Sprite();
 				swfMask.graphics.beginFill(0xFFFFFF, 1); // masque opaque
-				swfMask.graphics.drawRect(0, 0, 500, 500);
+				swfMask.graphics.drawRect(0, 0, 400, 400);
 				swfMask.graphics.endFill();
 				swfMask.x = 0;
 				swfMask.y = 0;
@@ -238,9 +271,19 @@
 
 			SceneData.currentSceneData = SceneData.allSceneData[0];
 
+			if (!SceneData.currentSceneData) {
+				trace("No scenes found in the SWF file. Aborting conversion.");
+				showErrorMessage("No scenes found in the SWF file.");
+				return;
+			}
+
 			//-----------------------------------------------------------
 			listHeader = '[gd_scene load_steps=1 format=3 uid=\"uid://' + generateUID() + '\"]\n';
-			listNode.push('[node name="root_clip" type="Node2D"]\n\n');
+			if (sprite3DEnabled) {
+				listNode.push('[node name="root_clip" type="Node3D"]\n\n');
+			} else {
+				listNode.push('[node name="root_clip" type="Node2D"]\n\n');
+			}
 			listAnimationLibrary = 'AnimationLibrary_' + generateUIDTex();
 			listAnimationPlayer = '[node name="AnimationPlayer" type="AnimationPlayer" parent="."]\nlibraries = {\n&"": SubResource("'+listAnimationLibrary+'")\n}\n';
 
@@ -328,7 +371,7 @@
 			tscnContent += '\n' + listAnimationPlayer;
 
 			//------------------------------------------------------------
-			var tscnFile:File = outputFolder.resolvePath("exported_scene.tscn");
+			var tscnFile:File = outputFolder.resolvePath(outputFolderAnimSt + '.tscn');
 			var fs:FileStream = new FileStream();
 			fs.open(tscnFile, FileMode.WRITE);
 			fs.writeUTFBytes(tscnContent);
@@ -347,16 +390,14 @@
 			atlasRects = new Dictionary();
 			var atlases:Array = [];
 			
+			
 			var currentAtlasIndex:int = 0;
 			var currentX:int = 0;
 			var currentY:int = 0;
 			var currentRowHeight:int = 0;
 
-			var MAX_SAFE_ATLAS_SIZE:int = 4096;
-			var scaledAtlasWidth:int = Math.min(MAX_ATLAS_WIDTH , MAX_SAFE_ATLAS_SIZE);
-			var scaledAtlasHeight:int = Math.min(MAX_ATLAS_HEIGHT , MAX_SAFE_ATLAS_SIZE);
 			var createNewAtlas = function():void {
-				atlases.push(new BitmapData(scaledAtlasWidth, scaledAtlasHeight, true, 0x00000000));
+				atlases.push(new BitmapData(MAX_ATLAS_WIDTH, MAX_ATLAS_HEIGHT, true, 0x00000000));
 				currentX = 0;
 				currentY = 0;
 				currentRowHeight = 0;
@@ -368,16 +409,16 @@
 				var item:Object = bitmapDataCache[id];
 				var bd:BitmapData = item.bd;
 				// Appliquer le facteur d'échelle DPI aux dimensions
-				var scaledWidth:int = bd.width * dpiScaleFactor;
-				var scaledHeight:int = bd.height * dpiScaleFactor;
+				var scaledWidth:int = bd.width;
+				var scaledHeight:int = bd.height;
 
-				if (currentX + scaledWidth > scaledAtlasWidth) {
+				if (currentX + scaledWidth > MAX_ATLAS_WIDTH) {
 					currentX = 0;
 					currentY += currentRowHeight;
 					currentRowHeight = 0;
 				}
 
-				if (currentY + scaledHeight > scaledAtlasHeight) {
+				if (currentY + scaledHeight > MAX_ATLAS_HEIGHT) {
 					currentAtlasIndex++;
 					createNewAtlas();
 				}
@@ -387,7 +428,6 @@
 					bd.lock();
 					// Créer une matrice de transformation pour le DPI et la position dans l'atlas
 					var matrix:Matrix = new Matrix();
-					matrix.scale(dpiScaleFactor, dpiScaleFactor);
 					matrix.translate(currentX, currentY);
 					atlas.draw(bd, matrix, null, null, null, true);
 					bd.unlock();
@@ -625,6 +665,7 @@
 			if (obj is MovieClip && _haveValue == false) 
 			{	
 
+				clipTypes[nodeName] = "MovieClip";
 				fillListClipName(nodeName);
 				listAnimatedClip.push(nodeName);
 
@@ -633,6 +674,7 @@
 			if ((obj is Sprite || obj is Shape || obj is Bitmap) && _haveValue == false) 
 			{
 				
+				clipTypes[nodeName] = "Shape";
 				fillListClipName(nodeName);
 				listAnimatedClip.push(nodeName);
 
@@ -668,13 +710,27 @@
 
 			var _scaleX = getSignedScale(obj).x;
 			var _scaleY = getSignedScale(obj).y;
-			// Appliquer le facteur d'échelle DPI aux coordonnées
-			var posX = Math.ceil(obj.x * dpiScaleFactor);
-			var posY = Math.ceil(obj.y * dpiScaleFactor);
-			_st += '[node name="' + nodeName + '" type="Node2D" parent="' + _parent_path+'"]\n';
-			_st += 'position = Vector2('+posX+','+posY+')\n'
-			_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n'
-			_st += 'scale = '+ 'Vector2('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+')\n';
+			var _scaleGlobal = getGlobalSignedScale(obj);
+			var _scaleZ = _scaleGlobal.x * _scaleGlobal.y;
+			if (_scaleZ > 0)
+			{
+				_scaleZ = 1;
+			}else
+			{
+				_scaleZ = -1;
+			}
+			
+			if (sprite3DEnabled) {
+				_st += '[node name="' + nodeName + '" type="Node3D" parent="' + _parent_path+'"]\n';
+				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER* dpiScaleFactor)+','+(-obj.y / PIXELS_PER_METER* dpiScaleFactor)+','+ (obj.parent.getChildIndex(obj)+1) * 0.02 * dpiScaleFactor +')\n'
+				_st += 'rotation = Vector3(0, 0, '+ (-GodotExport.getTrueRotationRadians(obj)) +')\n'
+				_st += 'scale = Vector3('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+','+_scaleZ+')\n';
+			} else {
+				_st += '[node name="' + nodeName + '" type="Node2D" parent="' + _parent_path+'"]\n';
+				_st += 'position = Vector2('+Math.ceil(obj.x * dpiScaleFactor)+','+Math.ceil(obj.y * dpiScaleFactor)+')\n'
+				_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n'
+				_st += 'scale = Vector2('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+')\n';
+			}
 			//_st += 'scale = Vector2('+Math.ceil(obj.scaleX)+','+Math.ceil(obj.scaleY)+')\n'
 
 			var _nodeData : NodeData = new NodeData();
@@ -705,10 +761,29 @@
 			var _posXFinal : int = (_posX + (_width/2)) * dpiScaleFactor;
 			var _posYFinal : int = (_posY + (_height/2)) * dpiScaleFactor;
 
-			_st += '[node name="'+nodeName+'" type="Sprite2D" parent="' + _parent_path+'"]\n';
-			_st += 'position = Vector2('+Math.ceil(_posXFinal)+','+Math.ceil(_posYFinal)+')\n';
-			_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n';
-			_st += 'scale = Vector2('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+')\n'
+			var _scaleGlobal = getGlobalSignedScale(obj);
+			var _scaleZ = _scaleGlobal.x * _scaleGlobal.y;
+			if (_scaleZ > 0)
+			{
+				_scaleZ = 1;
+			}else
+			{
+				_scaleZ = -1;
+			}
+
+			
+			if (sprite3DEnabled) {
+				_st += '[node name="'+nodeName+'" type="Sprite3D" parent="' + _parent_path+'"]\n';
+				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+  ','+ 0.02 * dpiScaleFactor +')\n'
+				_st += 'rotation = Vector3(0, 0, '+ GodotExport.getTrueRotationRadians(obj) +')\n';
+				_st += 'scale = Vector3('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+','+_scaleZ+')\n';
+				//_st += 'shaded = true\n';
+			} else {
+				_st += '[node name="'+nodeName+'" type="Sprite2D" parent="' + _parent_path+'"]\n';
+				_st += 'position = Vector2('+Math.ceil(_posXFinal)+','+Math.ceil(_posYFinal)+')\n';
+				_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n';
+				_st += 'scale = Vector2('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+')\n';
+			}
 			_st += 'flip_h = '+ (_scale.x < 0)+'\n';
 			if (atlasEnabled) {
 				_st += 'texture = ATLAS_TEXTURE_PLACEHOLDER_FOR_ID_' + _idTex + '\n';
@@ -977,23 +1052,49 @@
 
 		private function insertAnimationDatas() 
 		{
-			var _arrayProps : Array = [
-				['x','y'],
-				['scaleX','scaleY'],
-				['rotation'],
-				//['alpha'],
-				['visible'],
-                ['z_index']
-			] ;
+			var _arrayProps : Array;
+			if (sprite3DEnabled) {
+				_arrayProps = [
+					['x'],
+					['y'],
+					['z'],
+					['scaleX','scaleY'],
+					['rotation'],
+					//['alpha'],
+					['visible']
+				] ;
+			} else {
+				_arrayProps = [
+					['x','y'],
+					['scaleX','scaleY'],
+					['rotation'],
+					//['alpha'],
+					['visible'],
+					['z_index']
+				] ;
+			}
 
 
-			var _dictGodotPropsName : Object = {
-				'x,y': 'position',
-				'scaleX,scaleY' : 'scale',
-				'rotation' : 'rotation',
-				'alpha' : 'alpha',
-				'visible' : 'visible',
-				'z_index' : 'z_index'
+			var _dictGodotPropsName : Object;
+			if (sprite3DEnabled) {
+				_dictGodotPropsName = {
+					'x': 'position:x',
+					'y': 'position:y',
+					'z': 'position:z',
+					'scaleX,scaleY' : 'scale',
+					'rotation' : 'rotation',
+					'alpha' : 'alpha',
+					'visible' : 'visible'
+				};
+			} else {
+				_dictGodotPropsName = {
+					'x,y': 'position',
+					'scaleX,scaleY' : 'scale',
+					'rotation' : 'rotation',
+					'alpha' : 'alpha',
+					'visible' : 'visible',
+					'z_index' : 'z_index'
+				}
 			}
 
 			var _inc : int = 0;
@@ -1013,7 +1114,6 @@
 			
 			for each (var _clipName:String in listAnimatedClip) 
 			{
-				
 				var detector : TransitionDetector = dictTransitionDetectors[_clipName];
 
 
@@ -1024,12 +1124,15 @@
 					for each(var _propArray : Array in _arrayProps)
 					{
 						var _propArraySt = _propArray.toString();
-						var _dictData = getPositionVectorsFromFrame(_clip,_clipName,_propArray);//!!!
+
+						//if(_propArraySt == 'z_index' && sprite3DEnabled == true) continue
+
+						var _dictData = getPositionVectorsFromFrame(_clip,_clipName,_propArray);
 					
 						var _data : String ='';
 						var _updateValue = 0;
 
-						if(_propArraySt == 'visible') _updateValue = 1;
+						if(_propArraySt == 'visible' || _propArraySt == 'z') _updateValue = 1;
 
 						var _times =  _dictData['frames'].join(", ");
 
@@ -1038,15 +1141,6 @@
 						{
 							var element : * = _dictData['values'][i];
 							if(element === 0) _dictData['values'][i] = '0.0';
-							// Appliquer le facteur d'échelle DPI pour scaleX et scaleY
-							if(_propArraySt == 'scaleX,scaleY') {
-								if(_dictData['values'][i] is Array && _dictData['values'][i].length == 2) {
-									_dictData['values'][i][0] = Number(_dictData['values'][i][0]) * dpiScaleFactor;
-									_dictData['values'][i][1] = Number(_dictData['values'][i][1]) * dpiScaleFactor;
-								} else if(_dictData['values'][i] is Number) {
-									_dictData['values'][i] = Number(_dictData['values'][i]) * dpiScaleFactor;
-								}
-							}
 						}
 
 						_data += 'tracks/'+ _inc +'/type = "value"\n'
@@ -1133,6 +1227,25 @@
 			return new Point(sx, sy);
 		}
 
+		public static function getGlobalSignedScale(obj:DisplayObject):Point {
+			// On récupère la matrice complète jusqu’à la scène
+			var m:Matrix = obj.transform.concatenatedMatrix;
+
+			// Magnitudes des axes X et Y
+			var sx:Number = Math.sqrt(m.a * m.a + m.b * m.b);
+			var sy:Number = Math.sqrt(m.c * m.c + m.d * m.d);
+
+			// Déterminant pour détecter une inversion (flip)
+			var determinant:Number = m.a * m.d - m.b * m.c;
+
+			// Si le déterminant est négatif → inversion horizontale
+			if (determinant < 0) {
+				sx = -sx;
+			}
+
+			return new Point(sx, sy);
+		}
+
 
 		
 		private function getPositionVectorsFromFrame(_clip, _clipName : String, _array: Array) : Dictionary
@@ -1144,6 +1257,9 @@
 			var keyframesVisible : Vector.<int> = keyframesByProp['visible'];
 
 			var framesVector1 : Vector.<int> = keyframesByProp[_array[0]];
+			/*if (_array.toString() == 'z') {
+				framesVector1 = keyframesByProp['x'];
+			}*/
 			var framesVector2 : Vector.<int> = (_array.length > 1) ? keyframesByProp[_array[1]] : null;
 			
 			var positions : Array = new Array();
@@ -1156,7 +1272,7 @@
 
 			for (var i:int = SceneData.currentSceneData.startFrame; i <= SceneData.currentSceneData.endFrame; i++) 
 			{
-				var _frameXExisting =  framesVector1.indexOf(i);
+				var _frameXExisting =  framesVector1 ? framesVector1.indexOf(i) : -1;
 				var _frameYExisting =  (framesVector2 != null) ? framesVector2.indexOf(i) : -1;
 				var _currentFrameData = null;
 				var _index = i-1;
@@ -1209,9 +1325,17 @@
 							if (_currentFrameData && _currentFrameData.clip)
 							{
 								var godotRotation = _currentFrameData.rotation;
-								positions.push(godotRotation);
+								if (sprite3DEnabled) {
+									positions.push('Vector3(0, 0, ' + (-godotRotation) + ')');
+								} else {
+									positions.push(godotRotation);
+								}
 							}else{
-								positions.push(0);
+								if (sprite3DEnabled) {
+									positions.push('Vector3(0, 0, 0)');
+								} else {
+									positions.push(0);
+								}
 							}
 							break;
 
@@ -1228,25 +1352,85 @@
 						case 'x,y':
 							if (_currentFrameData && _currentFrameData.clip)
 							{
-								positions.push('Vector2(' + Math.round(_currentFrameData.x * dpiScaleFactor) + ',' + Math.round(_currentFrameData.y * dpiScaleFactor) + ')');
+								if (sprite3DEnabled) {
+									// This case is now handled by 'x', 'y', 'z'
+								} else {
+									positions.push('Vector2('+Math.round(_currentFrameData.x * dpiScaleFactor)+','+Math.round(_currentFrameData.y * dpiScaleFactor)+')');
+								}
 							}else{
-								positions.push('Vector2(' + 0 + ',' + 0 + ')');
+								if (sprite3DEnabled) {
+									// This case is now handled by 'x', 'y', 'z'
+								} else {
+									positions.push('Vector2(0,0)');
+								}
+							}
+							break;
+						case 'x':
+							if (_currentFrameData && _currentFrameData.clip)
+							{
+								if (sprite3DEnabled) {
+									positions.push(_currentFrameData.x / PIXELS_PER_METER * dpiScaleFactor);
+								}
+							}else{
+								if (sprite3DEnabled) {
+									positions.push(0);
+								}
+							}
+							break;
+						case 'y':
+							if (_currentFrameData && _currentFrameData.clip)
+							{
+								if (sprite3DEnabled) {
+									positions.push(-_currentFrameData.y / PIXELS_PER_METER * dpiScaleFactor);
+								}
+							}else{
+								if (sprite3DEnabled) {
+									positions.push(0);
+								}
+							}
+							break;
+						case 'z':
+							if (_currentFrameData && _currentFrameData.clip)
+							{
+								if (sprite3DEnabled) {
+									positions.push(_currentFrameData.z / PIXELS_PER_METER * dpiScaleFactor*5);
+								}
+							}else{
+								if (sprite3DEnabled) {
+									positions.push(0);
+								}
 							}
 							break;
 					
 						case 'scaleX,scaleY':
 							if (_currentFrameData && _currentFrameData.clip)
 							{
-								positions.push('Vector2('+ convertToTwoDecimal(_currentFrameData.scaleX) +','+ convertToTwoDecimal(_currentFrameData.scaleY)+')');
+								if (sprite3DEnabled) {
+									//if(clipTypes[_clipName] == "MovieClip")
+									//{
+										positions.push('Vector3('+ convertToTwoDecimal(_currentFrameData.scaleX) +','+ convertToTwoDecimal(_currentFrameData.scaleY)+',1)');
+									//}
+								} else {
+									positions.push('Vector2('+ convertToTwoDecimal(_currentFrameData.scaleX) +','+ convertToTwoDecimal(_currentFrameData.scaleY)+')');
+								}
 							}else{
-								positions.push('Vector2('+0+','+0+')');
+								if (sprite3DEnabled) 
+								{
+									//if(clipTypes[_clipName] == "MovieClip")
+									//{
+										positions.push('Vector3(0,0,0)');
+									//}
+								} else {
+									positions.push('Vector2(0,0)');
+								}
 							}
 							break;
 
 						case 'visible':
 							var _visible = false;
 							if(_currentFrameData == null) _visible = false;
-							if(_currentFrameData != null) _visible = _currentFrameData.visible;/* && _currentFrameData.sceneName == SceneData.currentSceneData.currentScene.name*/;
+							if(_currentFrameData != null) _visible = _currentFrameData.visible;
+							
 							if(_currentFrameData != null  && _nextFrameData != null && _nextFrameData.visible == false && _currentFrameData.visible==true && _endFrame == false && _startFrame == false && _nextIndex == -1)
 							{
 								_visible = false;
@@ -1280,31 +1464,31 @@
 
 		private function createDropZone():Sprite {
 			dropZone = new Sprite();
+			const dropZoneWidth:int = 400;
+			const dropZoneHeight:int = 400;
 
 			// Fond semi-transparent
 			dropZone.graphics.beginFill(0x000000, 0.1);
-			dropZone.graphics.drawRoundRect(0, 0, 500, 500, 20, 20);
+			dropZone.graphics.drawRoundRect(0, 0, dropZoneWidth, dropZoneHeight, 20, 20);
 			dropZone.graphics.endFill();
 
 			// Contour pointillé bleu foncé
-			drawDashedRect(dropZone, 0, 0, 500, 500, 20, 10, 5, 0x00008B, 2);
+			drawDashedRect(dropZone, 0, 0, dropZoneWidth, dropZoneHeight, 20, 10, 5, 0x00008B, 2);
 
-			dropZone.x = (stage.stageWidth - 500) / 2;
-			dropZone.y = (stage.stageHeight - 500) / 2;
-
-			addChild(dropZone);
+			dropZone.x = 310;
+			dropZone.y = 50;
 
 			// === Titre au-dessus de la box ===
 			titleText = new TextField();
 			titleText.text = "Drag your SWF in the box for conversion";
 			titleText.textColor = 0x333399;
-			titleText.width = stage.stageWidth;
+			titleText.width = dropZoneWidth;
 			titleText.height = 30;
 			titleText.selectable = false;
 			titleText.multiline = false;
 			titleText.wordWrap = false;
-			titleText.x = 0;
-			titleText.y = dropZone.y - 40;
+			titleText.x = dropZone.x;
+			titleText.y = 15;
 			titleText.autoSize = "center";
 
 			var titleFormat:TextFormat = new TextFormat();
@@ -1326,7 +1510,7 @@
 			
 			// Style du bouton
 			openFolderBtn.graphics.beginFill(0x00008B); // bleu foncé
-			openFolderBtn.graphics.drawRoundRect(0, 0, 200, 50, 10, 10);
+			openFolderBtn.graphics.drawRoundRect(0, 0, 200, 40, 10, 10);
 			openFolderBtn.graphics.endFill();
 
 			// Label du bouton
@@ -1352,10 +1536,8 @@
 
 			openFolderBtn.addChild(openFolderLabel);
 
-			// Position du bouton sous la dropBox
-			openFolderBtn.x = (stage.stageWidth - 200) / 2;
-			openFolderBtn.y = dropZone.y + dropZone.height + 20;
-
+			// Position handled in createMarginInputs
+			
 			addChild(openFolderBtn);
 
 			// Interaction
@@ -1372,7 +1554,7 @@
 			}
 		}
 
-		private function createInputs():void {
+		private function createMarginInputs():void {
 			marginContainer = new Sprite();
 			
 			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
@@ -1423,14 +1605,30 @@
 			marginYInput.y = 10;
 			marginContainer.addChild(marginYInput);
 
+			var containerWidth:Number = marginYInput.x + marginYInput.width + 10;
+			var containerHeight:Number = 40;
+
+			marginContainer.graphics.beginFill(0x00008B); // Dark blue
+			marginContainer.graphics.drawRoundRect(0, 0, containerWidth, containerHeight, 10, 10);
+			marginContainer.graphics.endFill();
+			
+			addChild(marginContainer);
+		}
+
+		private function createAtlasOption():Sprite {
+			var atlasContainer:Sprite = new Sprite();
+
+			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
+			labelFormat.bold = true;
+
 			// --- Atlas Checkbox ---
 			var atlasLabel:TextField = new TextField();
 			atlasLabel.text = "Single Texture";
 			atlasLabel.setTextFormat(labelFormat);
 			atlasLabel.autoSize = "left";
-			atlasLabel.x = marginYInput.x + marginYInput.width + 20;
+			atlasLabel.x = 10;
 			atlasLabel.y = 12;
-			marginContainer.addChild(atlasLabel);
+			atlasContainer.addChild(atlasLabel);
 
 			atlasEnabledCheckbox = new Sprite();
 			atlasEnabledCheckbox.graphics.lineStyle(1, 0xFFFFFF);
@@ -1441,50 +1639,17 @@
 			atlasEnabledCheckbox.y = 12;
 			atlasEnabledCheckbox.buttonMode = true;
 			atlasEnabledCheckbox.addEventListener(MouseEvent.CLICK, toggleAtlas);
-			marginContainer.addChild(atlasEnabledCheckbox);
+			atlasContainer.addChild(atlasEnabledCheckbox);
 
 			var containerWidth:Number = atlasEnabledCheckbox.x + atlasEnabledCheckbox.width + 10;
+			var containerHeight:Number = 40;
 
+			atlasContainer.graphics.beginFill(0x00008B); // Dark blue
+			atlasContainer.graphics.drawRoundRect(0, 0, containerWidth, containerHeight, 10, 10);
+			atlasContainer.graphics.endFill();
 
-			var dpiLabel:TextField = new TextField();
-			dpiLabel.text = "DPI:";
-			dpiLabel.setTextFormat(labelFormat);
-			dpiLabel.autoSize = "left";
-			dpiLabel.x = atlasEnabledCheckbox.x + atlasEnabledCheckbox.width + 20;
-			dpiLabel.y = 12;
-			marginContainer.addChild(dpiLabel);
-
-			dpiInput = new TextField();
-			dpiInput.type = "input";
-			dpiInput.border = true;
-			dpiInput.borderColor = 0xAAAAAA;
-			dpiInput.background = true;
-			dpiInput.backgroundColor = 0x333333;
-			dpiInput.width = 40;
-			dpiInput.height = 20;
-			dpiInput.text = exportDPI.toString();
-			dpiInput.restrict = "0-9";
-			dpiInput.defaultTextFormat = inputFormat;
-			dpiInput.setTextFormat(inputFormat);
-			dpiInput.x = dpiLabel.x + dpiLabel.width + 5;
-			dpiInput.y = 10;
-			marginContainer.addChild(dpiInput);
-			dpiInput.addEventListener(Event.CHANGE, onDPIChange);
-
-			var containerDpiInputWidth:Number = dpiInput.x + dpiInput.width + 10;
-			marginContainer.graphics.beginFill(0x00008B); // Dark blue
-			marginContainer.graphics.drawRoundRect(0, 0, containerDpiInputWidth, 50, 10, 10);
-			marginContainer.graphics.endFill();
-			
-			var totalWidth:Number = containerDpiInputWidth + openFolderBtn.width + 10;
-			var startX:Number = (stage.stageWidth - totalWidth) / 2;
-			
-			marginContainer.x = startX;
-			marginContainer.y = openFolderBtn.y;
-			
-			openFolderBtn.x = startX + containerDpiInputWidth + 10;
-			
-			addChild(marginContainer);
+			addChild(atlasContainer);
+			return atlasContainer;
 		}
 
 		private function toggleAtlas(e:MouseEvent):void {
@@ -1501,6 +1666,123 @@
 				atlasEnabledCheckbox.graphics.moveTo(4, 8);
 				atlasEnabledCheckbox.graphics.lineTo(8, 12);
 				atlasEnabledCheckbox.graphics.lineTo(12, 4);
+			}
+		}
+
+		private function createDPIOption():Sprite {
+			var dpiContainer:Sprite = new Sprite();
+
+			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
+			labelFormat.bold = true;
+
+			var inputFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
+
+			var dpiLabel:TextField = new TextField();
+			dpiLabel.text = "DPI:";
+			dpiLabel.setTextFormat(labelFormat);
+			dpiLabel.autoSize = "left";
+			dpiLabel.x = 10;
+			dpiLabel.y = 12;
+			dpiContainer.addChild(dpiLabel);
+
+			dpiInput = new TextField();
+			dpiInput.type = "input";
+			dpiInput.border = true;
+			dpiInput.borderColor = 0xAAAAAA;
+			dpiInput.background = true;
+			dpiInput.backgroundColor = 0x333333;
+			dpiInput.width = 40;
+			dpiInput.height = 20;
+			dpiInput.text = exportDPI.toString();
+			dpiInput.restrict = "0-9";
+			dpiInput.defaultTextFormat = inputFormat;
+			dpiInput.setTextFormat(inputFormat);
+			dpiInput.x = dpiLabel.x + dpiLabel.width + 5;
+			dpiInput.y = 10;
+			dpiContainer.addChild(dpiInput);
+			dpiInput.addEventListener(Event.CHANGE, onDPIChange);
+
+			var containerWidth:Number = dpiInput.x + dpiInput.width + 10;
+			var containerHeight:Number = 40;
+
+			dpiContainer.graphics.beginFill(0x00008B); // Dark blue
+			dpiContainer.graphics.drawRoundRect(0, 0, containerWidth, containerHeight, 10, 10);
+			dpiContainer.graphics.endFill();
+
+			addChild(dpiContainer);
+			return dpiContainer;
+		}
+
+		public function setExportDPI(newDPI:Number):void {
+			exportDPI = newDPI;
+			dpiScaleFactor = exportDPI / baseDPI;
+			trace("DPI d'export modifié à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
+		}
+
+		public function getExportDPI():Number {
+			return exportDPI;
+		}
+		
+		private function onDPIChange(e:Event):void {
+			var newDPI:int = parseInt(dpiInput.text);
+			if (newDPI > 0) {
+				exportDPI = newDPI;
+				dpiScaleFactor = exportDPI / baseDPI;
+				trace("DPI mis à jour : " + exportDPI + " (facteur d'échelle: " + dpiScaleFactor + ")");
+			}
+		}
+
+		private function create3DOption():Sprite {
+			var sprite3DContainer:Sprite = new Sprite();
+
+			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
+			labelFormat.bold = true;
+
+			// --- 3D Checkbox ---
+			var sprite3DLabel:TextField = new TextField();
+			sprite3DLabel.text = "Export as Sprite3D";
+			sprite3DLabel.setTextFormat(labelFormat);
+			sprite3DLabel.autoSize = "left";
+			sprite3DLabel.x = 10;
+			sprite3DLabel.y = 12;
+			sprite3DContainer.addChild(sprite3DLabel);
+
+			sprite3DEnabledCheckbox = new Sprite();
+			sprite3DEnabledCheckbox.graphics.lineStyle(1, 0xFFFFFF);
+			sprite3DEnabledCheckbox.graphics.beginFill(0x333333);
+			sprite3DEnabledCheckbox.graphics.drawRoundRect(0, 0, 16, 16, 4, 4);
+			sprite3DEnabledCheckbox.graphics.endFill();
+			sprite3DEnabledCheckbox.x = sprite3DLabel.x + sprite3DLabel.width + 5;
+			sprite3DEnabledCheckbox.y = 12;
+			sprite3DEnabledCheckbox.buttonMode = true;
+			sprite3DEnabledCheckbox.addEventListener(MouseEvent.CLICK, toggleSprite3D);
+			sprite3DContainer.addChild(sprite3DEnabledCheckbox);
+
+			var containerWidth:Number = sprite3DEnabledCheckbox.x + sprite3DEnabledCheckbox.width + 10;
+			var containerHeight:Number = 40;
+
+			sprite3DContainer.graphics.beginFill(0x00008B); // Dark blue
+			sprite3DContainer.graphics.drawRoundRect(0, 0, containerWidth, containerHeight, 10, 10);
+			sprite3DContainer.graphics.endFill();
+
+			addChild(sprite3DContainer);
+			return sprite3DContainer;
+		}
+
+		private function toggleSprite3D(e:MouseEvent):void {
+			sprite3DEnabled = !sprite3DEnabled;
+			
+			sprite3DEnabledCheckbox.graphics.clear();
+			sprite3DEnabledCheckbox.graphics.lineStyle(1, 0xFFFFFF);
+			sprite3DEnabledCheckbox.graphics.beginFill(0x333333);
+			sprite3DEnabledCheckbox.graphics.drawRoundRect(0, 0, 16, 16, 4, 4);
+			sprite3DEnabledCheckbox.graphics.endFill();
+			
+			if (sprite3DEnabled) {
+				sprite3DEnabledCheckbox.graphics.lineStyle(2, 0xFFFFFF);
+				sprite3DEnabledCheckbox.graphics.moveTo(4, 8);
+				sprite3DEnabledCheckbox.graphics.lineTo(8, 12);
+				sprite3DEnabledCheckbox.graphics.lineTo(12, 4);
 			}
 		}
 
@@ -1528,25 +1810,6 @@
 				drawn += segment;
 				g.lineTo(x1 + Math.cos(angle) * drawn, y1 + Math.sin(angle) * drawn);
 				drawn += gapLength;
-			}
-		}
-
-		public function setExportDPI(newDPI:Number):void {
-			exportDPI = newDPI;
-			dpiScaleFactor = exportDPI / baseDPI;
-			trace("DPI d'export modifié à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
-		}
-
-		public function getExportDPI():Number {
-			return exportDPI;
-		}
-		
-		private function onDPIChange(e:Event):void {
-			var newDPI:int = parseInt(dpiInput.text);
-			if (newDPI > 0) {
-				exportDPI = newDPI;
-				dpiScaleFactor = exportDPI / baseDPI;
-				trace("DPI mis à jour : " + exportDPI + " (facteur d'échelle: " + dpiScaleFactor + ")");
 			}
 		}
 	}
@@ -1625,8 +1888,9 @@ internal class AnimationData
 
 internal class FrameData {
 	public var frameNumber:int;
-	public var x:Number;
-	public var y:Number;
+	public var x:Number = 0;
+	public var y:Number = 0;
+	public var z:Number = 0;
 	public var clip : *;
 	public var scaleX:Number;
 	public var scaleY:Number;
@@ -1675,6 +1939,7 @@ internal class FrameData {
             if(clip.parent != null && clip.parent == GodotExport.rootMovieClip)
             {
                 this.z_index = clip.parent.getChildIndex(clip);
+				this.z = clip.parent.getChildIndex(clip);
             }
 
 			this.x = _datas.x;
@@ -1744,7 +2009,7 @@ internal class TransitionDetector {
 	
 	public function getKeyframes():Dictionary 
 	{
-		var props:Array = ["x","y","scaleX","scaleY","rotation","alpha","visible","exists","width","height","z_index"];
+		var props:Array = ["x","y","z","scaleX","scaleY","rotation","alpha","visible","exists","width","height","z_index"];
 		var result:Dictionary = new Dictionary();
 
 		if (frameData.length == 0) return result;
