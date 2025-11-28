@@ -1,4 +1,4 @@
-﻿package {
+package {
 	import com.adobe.images.PNGEncoder;
 	import flash.display.*;
 	import flash.events.*;
@@ -67,14 +67,6 @@
 		private var sprite3DEnabled:Boolean = false;
 		private var bitmapDataCache:Dictionary = new Dictionary();
 		private var atlasRects:Dictionary;
-
-		private var exportDPI:Number = 72; // DPI pour l'export des textures
-		private var baseDPI:Number = 72; // DPI de base de Flash
-		private var dpiScaleFactor:Number = exportDPI / baseDPI; // Facteur d'échelle pour le DPI
-
-		public static var z_spriteSpace = 0.02;
-		
-		private var dpiInput:TextField;
 		
 		public function GodotExport() {
 			if (File.desktopDirectory) {
@@ -89,7 +81,6 @@
 				createMarginInputs(); // Creates marginContainer
 				var atlasOptionContainer:Sprite = createAtlasOption(); // Creates atlasContainer
 				var sprite3DOptionContainer:Sprite = create3DOption();
-				var dpiOptionContainer:Sprite = createDPIOption();
 				createOpenFolderButton(); // Creates openFolderBtn
 
 				// Position the option elements
@@ -107,10 +98,6 @@
 				sprite3DOptionContainer.x = leftPanelX;
 				sprite3DOptionContainer.y = currentY;
 				currentY += sprite3DOptionContainer.height + 10;
-
-				dpiOptionContainer.x = leftPanelX;
-				dpiOptionContainer.y = currentY;
-				currentY += dpiOptionContainer.height + 10;
 
 				openFolderBtn.x = leftPanelX;
 				openFolderBtn.y = currentY;
@@ -158,7 +145,6 @@
 
 
 			// 3. Réinitialiser les listes et dictionnaires
-			bitmapDataCache = new Dictionary();
 			errorMsg = '';
 			listHeader = '';
 			listTexture = [];
@@ -273,18 +259,12 @@
 
 			SceneData.currentSceneData = SceneData.allSceneData[0];
 
-			if (!SceneData.currentSceneData) {
-				trace("No scenes found in the SWF file. Aborting conversion.");
-				showErrorMessage("No scenes found in the SWF file.");
-				return;
-			}
-
 			//-----------------------------------------------------------
 			listHeader = '[gd_scene load_steps=1 format=3 uid=\"uid://' + generateUID() + '\"]\n';
 			if (sprite3DEnabled) {
-				listNode.push('[node name="' + outputFolderAnimSt + '" type="Node3D"]\n\n');
+				listNode.push('[node name="root_clip" type="Node3D"]\n\n');
 			} else {
-				listNode.push('[node name="' + outputFolderAnimSt + '" type="Node2D"]\n\n');
+				listNode.push('[node name="root_clip" type="Node2D"]\n\n');
 			}
 			listAnimationLibrary = 'AnimationLibrary_' + generateUIDTex();
 			listAnimationPlayer = '[node name="AnimationPlayer" type="AnimationPlayer" parent="."]\nlibraries = {\n&"": SubResource("'+listAnimationLibrary+'")\n}\n';
@@ -372,11 +352,8 @@
 
 			tscnContent += '\n' + listAnimationPlayer;
 
-			var _startScene : Scene = SceneData.allSceneData[0].currentScene;
-			tscnContent += 'autoplay = "'+ _startScene.name +'"\n'
-
 			//------------------------------------------------------------
-			var tscnFile:File = outputFolder.resolvePath(outputFolderAnimSt + '.tscn');
+			var tscnFile:File = outputFolder.resolvePath("exported_scene.tscn");
 			var fs:FileStream = new FileStream();
 			fs.open(tscnFile, FileMode.WRITE);
 			fs.writeUTFBytes(tscnContent);
@@ -395,7 +372,6 @@
 			atlasRects = new Dictionary();
 			var atlases:Array = [];
 			
-			
 			var currentAtlasIndex:int = 0;
 			var currentX:int = 0;
 			var currentY:int = 0;
@@ -413,41 +389,36 @@
 			for (var id:String in bitmapDataCache) {
 				var item:Object = bitmapDataCache[id];
 				var bd:BitmapData = item.bd;
-				// Appliquer le facteur d'échelle DPI aux dimensions
-				var scaledWidth:int = bd.width;
-				var scaledHeight:int = bd.height;
 
-				if (currentX + scaledWidth > MAX_ATLAS_WIDTH) {
+				if (currentX + bd.width > MAX_ATLAS_WIDTH) {
 					currentX = 0;
 					currentY += currentRowHeight;
 					currentRowHeight = 0;
 				}
 
-				if (currentY + scaledHeight > MAX_ATLAS_HEIGHT) {
+				if (currentY + bd.height > MAX_ATLAS_HEIGHT) {
 					currentAtlasIndex++;
 					createNewAtlas();
 				}
 
 				var atlas:BitmapData = atlases[currentAtlasIndex];
+				var destPoint:Point = new Point(currentX, currentY);
 				try {
 					bd.lock();
-					// Créer une matrice de transformation pour le DPI et la position dans l'atlas
-					var matrix:Matrix = new Matrix();
-					matrix.translate(currentX, currentY);
-					atlas.draw(bd, matrix, null, null, null, true);
+					atlas.copyPixels(bd, bd.rect, destPoint);
 					bd.unlock();
 				} catch (e:Error) {
-					throw new Error("Failed during draw in generateAtlas for texture ID '" + id + "'. Original error: " + e.message);
+					throw new Error("Failed during copyPixels in generateAtlas for texture ID '" + id + "'. Original error: " + e.message);
 				}
 
 				atlasRects[id] = {
-					rect: new Rectangle(currentX, currentY, scaledWidth, scaledHeight),
+					rect: new Rectangle(currentX, currentY, bd.width, bd.height),
 					atlasIndex: currentAtlasIndex
 				};
 
-				currentX += scaledWidth;
-				if (scaledHeight > currentRowHeight) {
-					currentRowHeight = scaledHeight;
+				currentX += bd.width;
+				if (bd.height > currentRowHeight) {
+					currentRowHeight = bd.height;
 				}
 			}
 
@@ -468,9 +439,9 @@
 				fs.close();
 
 				var atlasUUID:String = generateUID();
-				var atlasTexPath:String =  atlasPath;
+				var atlasTexPath:String = outputFolderAnimSt + '/' + atlasPath;
 				var atlasID:String = "atlas_texture_" + i;
-				var atlasTex:String = '[ext_resource type="Texture2D" uid="uid://'+ atlasUUID +'" path="' + atlasTexPath + '" id="' + atlasID + '"]\n';
+				var atlasTex:String = '[ext_resource type="Texture2D" uid="uid://'+ atlasUUID +'" path="res://' + atlasTexPath + '" id="' + atlasID + '"]\n';
 				listTexture.push(atlasTex);
 			}
 
@@ -715,36 +686,15 @@
 
 			var _scaleX = getSignedScale(obj).x;
 			var _scaleY = getSignedScale(obj).y;
-			var _scaleGlobal = getGlobalSignedScale(obj);
-			var _scaleZ = _scaleGlobal.x * _scaleGlobal.y;
-			if (_scaleZ > 0)
-			{
-				_scaleZ = 1;
-			}else
-			{
-				_scaleZ = -1;
-			}
-
-			var _z = obj.parent.getChildIndex(obj)+1;
-
-			if(obj.parent == GodotExport.rootMovieClip)
-            {
-				_z = obj.parent.getChildIndex(obj) * z_spriteSpace * dpiScaleFactor;
-            }
-			else
-			{
-				_z =  _z * z_spriteSpace * dpiScaleFactor * 0.01;
-			}
-
-			if (sprite3DEnabled) 
-			{
+			
+			if (sprite3DEnabled) {
 				_st += '[node name="' + nodeName + '" type="Node3D" parent="' + _parent_path+'"]\n';
-				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER* dpiScaleFactor)+','+(-obj.y / PIXELS_PER_METER * dpiScaleFactor)+','+ _z +')\n';
-				_st += 'rotation = Vector3(0, 0, '+ (-GodotExport.getTrueRotationRadians(obj)) +')\n'
+				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER)+','+(-obj.y / PIXELS_PER_METER)+','+ obj.parent.getChildIndex(obj) * 0.01 +')\n'
+				_st += 'rotation = Vector3(0, 0, '+ GodotExport.getTrueRotationRadians(obj) +')\n'
 				_st += 'scale = Vector3('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+',1)\n';
 			} else {
 				_st += '[node name="' + nodeName + '" type="Node2D" parent="' + _parent_path+'"]\n';
-				_st += 'position = Vector2('+Math.ceil(obj.x * dpiScaleFactor)+','+Math.ceil(obj.y * dpiScaleFactor)+')\n'
+				_st += 'position = Vector2('+Math.ceil(obj.x)+','+Math.ceil(obj.y)+')\n'
 				_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n'
 				_st += 'scale = Vector2('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+')\n';
 			}
@@ -775,37 +725,15 @@
 			var _posY : int = _bounds.y;
 			var _width : int = _bounds.width;
 			var _height : int = _bounds.height;
-			var _posXFinal : int = (_posX + (_width/2)) * dpiScaleFactor;
-			var _posYFinal : int = (_posY + (_height/2)) * dpiScaleFactor;
+			var _posXFinal : int = _posX + (_width/2);
+			var _posYFinal : int = _posY + (_height/2);
 
-			var _scaleGlobal = getGlobalSignedScale(obj);
-			var _scaleZ = _scaleGlobal.x * _scaleGlobal.y;
-			if (_scaleZ > 0)
-			{
-				_scaleZ = 1;
-			}else
-			{
-				_scaleZ = -1;
-			}
-
-			var _z = obj.parent.getChildIndex(obj)+1;
-
-			if(obj.parent == GodotExport.rootMovieClip)
-            {
-				_z = obj.parent.getChildIndex(obj) * z_spriteSpace * dpiScaleFactor;
-            }
-			else
-			{
-				_z =  _z * z_spriteSpace * dpiScaleFactor * 0.1;
-			}
-
-			
 			if (sprite3DEnabled) {
 				_st += '[node name="'+nodeName+'" type="Sprite3D" parent="' + _parent_path+'"]\n';
-				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+  ','+ _z +')\n'
+				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+',' + obj.parent.getChildIndex(obj)* 0.01 +')\n'
 				_st += 'rotation = Vector3(0, 0, '+ GodotExport.getTrueRotationRadians(obj) +')\n';
-				_st += 'scale = Vector3('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+','+ _scaleZ +')\n';
-				//_st += 'shaded = true\n';
+				_st += 'scale = Vector3('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+',1)\n';
+				_st += 'no_depth_test = true\n';
 			} else {
 				_st += '[node name="'+nodeName+'" type="Sprite2D" parent="' + _parent_path+'"]\n';
 				_st += 'position = Vector2('+Math.ceil(_posXFinal)+','+Math.ceil(_posYFinal)+')\n';
@@ -914,9 +842,8 @@
 			var marginY:int = parseInt(marginYInput.text) || 0;
 
 			var bounds:Rectangle = getRealBounds(obj);
-			// Appliquer le facteur d'échelle DPI
-			var w:int = Math.max(1, Math.ceil(bounds.width * dpiScaleFactor)) + (marginX * 2);
-			var h:int = Math.max(1, Math.ceil(bounds.height * dpiScaleFactor)) + (marginY * 2);
+			var w:int = Math.max(1, Math.ceil(bounds.width)) + (marginX * 2);
+			var h:int = Math.max(1, Math.ceil(bounds.height)) + (marginY * 2);
 
 			if (w > 8191 || h > 8191) {
 				throw new Error("Object '" + nodeName + "' is too large to be exported. Its dimensions (" + w + "x" + h + ") exceed the maximum texture size of 8191px.");
@@ -932,9 +859,7 @@
 			try {
 				bd = new BitmapData(w, h, true, 0x00000000);
 				var matrix:Matrix = new Matrix();
-				// Appliquer le facteur d'échelle DPI sur la matrice
-				matrix.scale(dpiScaleFactor, dpiScaleFactor);
-				matrix.translate(-bounds.x * dpiScaleFactor + marginX, -bounds.y * dpiScaleFactor + marginY);
+				matrix.translate(-bounds.x + marginX, -bounds.y + marginY);
 				bd.draw(obj, matrix, null, null, null, true);
 			} catch (e:Error) {
 				throw new Error("Failed during BitmapData creation/draw in exportSprite for node '" + nodeName + "'. Original error: " + e.message);
@@ -969,7 +894,8 @@
 					fs.writeBytes(_png);
 					fs.close();	
 					var _uuid : String = generateUID();
-					var _tex : String = '[ext_resource type="Texture2D" uid="uid://'+ _uuid+'" path="' + _path + '" id="' + _id + '"]\n';
+					_path = outputFolderAnimSt+'/' +_path;
+					var _tex : String = '[ext_resource type="Texture2D" uid="uid://'+ _uuid+'" path="res://' + _path + '" id="' + _id + '"]\n';
 					listTexture.push(_tex);
 				}
 				textureID++;
@@ -1079,49 +1005,23 @@
 
 		private function insertAnimationDatas() 
 		{
-			var _arrayProps : Array;
-			if (sprite3DEnabled) {
-				_arrayProps = [
-					['x'],
-					['y'],
-					['z'],
-					['scaleX','scaleY'],
-					['rotation'],
-					//['alpha'],
-					['visible']
-				] ;
-			} else {
-				_arrayProps = [
-					['x','y'],
-					['scaleX','scaleY'],
-					['rotation'],
-					//['alpha'],
-					['visible'],
-					['z_index']
-				] ;
-			}
+			var _arrayProps : Array = [
+				['x','y'],
+				['scaleX','scaleY'],
+				['rotation'],
+				//['alpha'],
+				['visible'],
+                ['z_index']
+			] ;
 
 
-			var _dictGodotPropsName : Object;
-			if (sprite3DEnabled) {
-				_dictGodotPropsName = {
-					'x': 'position:x',
-					'y': 'position:y',
-					'z': 'position:z',
-					'scaleX,scaleY' : 'scale',
-					'rotation' : 'rotation',
-					'alpha' : 'alpha',
-					'visible' : 'visible'
-				};
-			} else {
-				_dictGodotPropsName = {
-					'x,y': 'position',
-					'scaleX,scaleY' : 'scale',
-					'rotation' : 'rotation',
-					'alpha' : 'alpha',
-					'visible' : 'visible',
-					'z_index' : 'z_index'
-				}
+			var _dictGodotPropsName : Object = {
+				'x,y': 'position',
+				'scaleX,scaleY' : 'scale',
+				'rotation' : 'rotation',
+				'alpha' : 'alpha',
+				'visible' : 'visible',
+				'z_index' : 'z_index'
 			}
 
 			var _inc : int = 0;
@@ -1135,22 +1035,6 @@
 			var listAnimationHeader = '[sub_resource type="Animation" id="'+_animation_id+'"]\n'
 				+ 'resource_name = "' + SceneData.currentSceneData.currentScene.name + '"\n'
 				+ 'length = ' + SceneData.currentSceneData.duration+'\n';
-
-			var labels:Array = SceneData.currentSceneData.currentScene.labels;
-			var hasLoopLabel:Boolean = false;
-			for each (var label:FrameLabel in labels)
-			{
-				trace(label.name);
-				if (label.name.indexOf('LOOP') != -1)
-				{
-					hasLoopLabel = true;
-					break;
-				}
-			}
-			if (hasLoopLabel)
-			{
-				listAnimationHeader += "loop_mode = 1\n";
-			}
 
 			_animationData.datas.push(listAnimationHeader);
 			
@@ -1168,14 +1052,14 @@
 					{
 						var _propArraySt = _propArray.toString();
 
-						//if(_propArraySt == 'z_index' && sprite3DEnabled == true) continue
+						if(_propArraySt == 'z_index' && sprite3DEnabled == true) continue
 
 						var _dictData = getPositionVectorsFromFrame(_clip,_clipName,_propArray);
 					
 						var _data : String ='';
 						var _updateValue = 0;
 
-						if(_propArraySt == 'visible' || _propArraySt == 'z') _updateValue = 1;
+						if(_propArraySt == 'visible') _updateValue = 1;
 
 						var _times =  _dictData['frames'].join(", ");
 
@@ -1206,18 +1090,6 @@
 					}
 				}
 			}
-			
-			// Process frame labels as method calls
-			for each (var _label:FrameLabel in labels)
-			{
-				if(_label.name.indexOf('LOOP') != -1) continue;
-
-				var labelTime:Number = getTimeFromFrame(SceneData.currentSceneData.startFrame + _label.frame-1);
-				var methodTrack:String = labelToMethodTrack(_label.name, labelTime, _inc);
-				_animationData.datas.push(methodTrack);
-				_inc++;
-			}
-			
 			SceneData.currentSceneData.animationsDataList.push(_animationData);
 		}
 		
@@ -1282,25 +1154,6 @@
 			return new Point(sx, sy);
 		}
 
-		public static function getGlobalSignedScale(obj:DisplayObject):Point {
-			// On récupère la matrice complète jusqu’à la scène
-			var m:Matrix = obj.transform.concatenatedMatrix;
-
-			// Magnitudes des axes X et Y
-			var sx:Number = Math.sqrt(m.a * m.a + m.b * m.b);
-			var sy:Number = Math.sqrt(m.c * m.c + m.d * m.d);
-
-			// Déterminant pour détecter une inversion (flip)
-			var determinant:Number = m.a * m.d - m.b * m.c;
-
-			// Si le déterminant est négatif → inversion horizontale
-			if (determinant < 0) {
-				sx = -sx;
-			}
-
-			return new Point(sx, sy);
-		}
-
 
 		
 		private function getPositionVectorsFromFrame(_clip, _clipName : String, _array: Array) : Dictionary
@@ -1312,9 +1165,6 @@
 			var keyframesVisible : Vector.<int> = keyframesByProp['visible'];
 
 			var framesVector1 : Vector.<int> = keyframesByProp[_array[0]];
-			/*if (_array.toString() == 'z') {
-				framesVector1 = keyframesByProp['x'];
-			}*/
 			var framesVector2 : Vector.<int> = (_array.length > 1) ? keyframesByProp[_array[1]] : null;
 			
 			var positions : Array = new Array();
@@ -1327,7 +1177,7 @@
 
 			for (var i:int = SceneData.currentSceneData.startFrame; i <= SceneData.currentSceneData.endFrame; i++) 
 			{
-				var _frameXExisting =  framesVector1 ? framesVector1.indexOf(i) : -1;
+				var _frameXExisting =  framesVector1.indexOf(i);
 				var _frameYExisting =  (framesVector2 != null) ? framesVector2.indexOf(i) : -1;
 				var _currentFrameData = null;
 				var _index = i-1;
@@ -1408,51 +1258,15 @@
 							if (_currentFrameData && _currentFrameData.clip)
 							{
 								if (sprite3DEnabled) {
-									// This case is now handled by 'x', 'y', 'z'
+									positions.push('Vector3('+(_currentFrameData.x / PIXELS_PER_METER)+','+(-_currentFrameData.y / PIXELS_PER_METER)+',1)');
 								} else {
-									positions.push('Vector2('+Math.round(_currentFrameData.x * dpiScaleFactor)+','+Math.round(_currentFrameData.y * dpiScaleFactor)+')');
+									positions.push('Vector2('+Math.round(_currentFrameData.x)+','+Math.round(_currentFrameData.y)+')');
 								}
 							}else{
 								if (sprite3DEnabled) {
-									// This case is now handled by 'x', 'y', 'z'
+									positions.push('Vector3(0,0,0)');
 								} else {
 									positions.push('Vector2(0,0)');
-								}
-							}
-							break;
-						case 'x':
-							if (_currentFrameData && _currentFrameData.clip)
-							{
-								if (sprite3DEnabled) {
-									positions.push(_currentFrameData.x / PIXELS_PER_METER * dpiScaleFactor);
-								}
-							}else{
-								if (sprite3DEnabled) {
-									positions.push(0);
-								}
-							}
-							break;
-						case 'y':
-							if (_currentFrameData && _currentFrameData.clip)
-							{
-								if (sprite3DEnabled) {
-									positions.push(-_currentFrameData.y / PIXELS_PER_METER * dpiScaleFactor);
-								}
-							}else{
-								if (sprite3DEnabled) {
-									positions.push(0);
-								}
-							}
-							break;
-						case 'z':
-							if (_currentFrameData && _currentFrameData.clip)
-							{
-								if (sprite3DEnabled) {
-									positions.push(_currentFrameData.z  * dpiScaleFactor * z_spriteSpace);
-								}
-							}else{
-								if (sprite3DEnabled) {
-									positions.push(0);
 								}
 							}
 							break;
@@ -1724,69 +1538,6 @@
 			}
 		}
 
-		private function createDPIOption():Sprite {
-			var dpiContainer:Sprite = new Sprite();
-
-			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
-			labelFormat.bold = true;
-
-			var inputFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
-
-			var dpiLabel:TextField = new TextField();
-			dpiLabel.text = "DPI:";
-			dpiLabel.setTextFormat(labelFormat);
-			dpiLabel.autoSize = "left";
-			dpiLabel.x = 10;
-			dpiLabel.y = 12;
-			dpiContainer.addChild(dpiLabel);
-
-			dpiInput = new TextField();
-			dpiInput.type = "input";
-			dpiInput.border = true;
-			dpiInput.borderColor = 0xAAAAAA;
-			dpiInput.background = true;
-			dpiInput.backgroundColor = 0x333333;
-			dpiInput.width = 40;
-			dpiInput.height = 20;
-			dpiInput.text = exportDPI.toString();
-			dpiInput.restrict = "0-9";
-			dpiInput.defaultTextFormat = inputFormat;
-			dpiInput.setTextFormat(inputFormat);
-			dpiInput.x = dpiLabel.x + dpiLabel.width + 5;
-			dpiInput.y = 10;
-			dpiContainer.addChild(dpiInput);
-			dpiInput.addEventListener(Event.CHANGE, onDPIChange);
-
-			var containerWidth:Number = dpiInput.x + dpiInput.width + 10;
-			var containerHeight:Number = 40;
-
-			dpiContainer.graphics.beginFill(0x00008B); // Dark blue
-			dpiContainer.graphics.drawRoundRect(0, 0, containerWidth, containerHeight, 10, 10);
-			dpiContainer.graphics.endFill();
-
-			addChild(dpiContainer);
-			return dpiContainer;
-		}
-
-		public function setExportDPI(newDPI:Number):void {
-			exportDPI = newDPI;
-			dpiScaleFactor = exportDPI / baseDPI;
-			trace("DPI d'export modifié à : " + exportDPI + " DPI (facteur d'échelle: " + dpiScaleFactor + "x)");
-		}
-
-		public function getExportDPI():Number {
-			return exportDPI;
-		}
-		
-		private function onDPIChange(e:Event):void {
-			var newDPI:int = parseInt(dpiInput.text);
-			if (newDPI > 0) {
-				exportDPI = newDPI;
-				dpiScaleFactor = exportDPI / baseDPI;
-				trace("DPI mis à jour : " + exportDPI + " (facteur d'échelle: " + dpiScaleFactor + ")");
-			}
-		}
-
 		private function create3DOption():Sprite {
 			var sprite3DContainer:Sprite = new Sprite();
 
@@ -1839,24 +1590,6 @@
 				sprite3DEnabledCheckbox.graphics.lineTo(8, 12);
 				sprite3DEnabledCheckbox.graphics.lineTo(12, 4);
 			}
-		}
-
-		private function labelToMethodTrack(labelName:String, time:Number, trackIndex:int):String {
-			var track:String = 'tracks/' + trackIndex + '/type = "method"\n'
-							+ 'tracks/' + trackIndex + '/imported = false\n'
-							+ 'tracks/' + trackIndex + '/enabled = true\n'
-							+ 'tracks/' + trackIndex + '/path = NodePath("../..")\n'
-							+ 'tracks/' + trackIndex + '/interp = 1\n'
-							+ 'tracks/' + trackIndex + '/loop_wrap = true\n'
-							+ 'tracks/' + trackIndex + '/keys = {\n'
-							+ '"times": PackedFloat32Array(' + time + '),\n'
-							+ '"transitions": PackedFloat32Array(1),\n'
-							+ '"values": [{\n'
-							+ '"args": [],\n'
-							+ '"method": &"' + labelName + '"\n'
-							+ '}]\n'
-							+ '}\n';
-			return track;
 		}
 
 		private function drawDashedRect(sprite:Sprite, x:Number, y:Number, w:Number, h:Number, radius:Number, dashLength:Number, gapLength:Number, color:uint, thickness:Number):void {
@@ -1961,9 +1694,8 @@ internal class AnimationData
 
 internal class FrameData {
 	public var frameNumber:int;
-	public var x:Number = 0;
-	public var y:Number = 0;
-	public var z:Number = 0;
+	public var x:Number;
+	public var y:Number;
 	public var clip : *;
 	public var scaleX:Number;
 	public var scaleY:Number;
@@ -2012,7 +1744,6 @@ internal class FrameData {
             if(clip.parent != null && clip.parent == GodotExport.rootMovieClip)
             {
                 this.z_index = clip.parent.getChildIndex(clip);
-				this.z = clip.parent.getChildIndex(clip);
             }
 
 			this.x = _datas.x;
@@ -2082,7 +1813,7 @@ internal class TransitionDetector {
 	
 	public function getKeyframes():Dictionary 
 	{
-		var props:Array = ["x","y","z","scaleX","scaleY","rotation","alpha","visible","exists","width","height","z_index"];
+		var props:Array = ["x","y","scaleX","scaleY","rotation","alpha","visible","exists","width","height","z_index"];
 		var result:Dictionary = new Dictionary();
 
 		if (frameData.length == 0) return result;

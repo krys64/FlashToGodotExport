@@ -1,4 +1,4 @@
-﻿package {
+package {
 	import com.adobe.images.PNGEncoder;
 	import flash.display.*;
 	import flash.events.*;
@@ -71,8 +71,6 @@
 		private var exportDPI:Number = 72; // DPI pour l'export des textures
 		private var baseDPI:Number = 72; // DPI de base de Flash
 		private var dpiScaleFactor:Number = exportDPI / baseDPI; // Facteur d'échelle pour le DPI
-
-		public static var z_spriteSpace = 0.02;
 		
 		private var dpiInput:TextField;
 		
@@ -282,9 +280,9 @@
 			//-----------------------------------------------------------
 			listHeader = '[gd_scene load_steps=1 format=3 uid=\"uid://' + generateUID() + '\"]\n';
 			if (sprite3DEnabled) {
-				listNode.push('[node name="' + outputFolderAnimSt + '" type="Node3D"]\n\n');
+				listNode.push('[node name="root_clip" type="Node3D"]\n\n');
 			} else {
-				listNode.push('[node name="' + outputFolderAnimSt + '" type="Node2D"]\n\n');
+				listNode.push('[node name="root_clip" type="Node2D"]\n\n');
 			}
 			listAnimationLibrary = 'AnimationLibrary_' + generateUIDTex();
 			listAnimationPlayer = '[node name="AnimationPlayer" type="AnimationPlayer" parent="."]\nlibraries = {\n&"": SubResource("'+listAnimationLibrary+'")\n}\n';
@@ -371,9 +369,6 @@
 			}
 
 			tscnContent += '\n' + listAnimationPlayer;
-
-			var _startScene : Scene = SceneData.allSceneData[0].currentScene;
-			tscnContent += 'autoplay = "'+ _startScene.name +'"\n'
 
 			//------------------------------------------------------------
 			var tscnFile:File = outputFolder.resolvePath(outputFolderAnimSt + '.tscn');
@@ -468,9 +463,9 @@
 				fs.close();
 
 				var atlasUUID:String = generateUID();
-				var atlasTexPath:String =  atlasPath;
+				var atlasTexPath:String = outputFolderAnimSt + '/' + atlasPath;
 				var atlasID:String = "atlas_texture_" + i;
-				var atlasTex:String = '[ext_resource type="Texture2D" uid="uid://'+ atlasUUID +'" path="' + atlasTexPath + '" id="' + atlasID + '"]\n';
+				var atlasTex:String = '[ext_resource type="Texture2D" uid="uid://'+ atlasUUID +'" path="res://' + atlasTexPath + '" id="' + atlasID + '"]\n';
 				listTexture.push(atlasTex);
 			}
 
@@ -724,24 +719,12 @@
 			{
 				_scaleZ = -1;
 			}
-
-			var _z = obj.parent.getChildIndex(obj)+1;
-
-			if(obj.parent == GodotExport.rootMovieClip)
-            {
-				_z = obj.parent.getChildIndex(obj) * z_spriteSpace * dpiScaleFactor;
-            }
-			else
-			{
-				_z =  _z * z_spriteSpace * dpiScaleFactor * 0.01;
-			}
-
-			if (sprite3DEnabled) 
-			{
+			
+			if (sprite3DEnabled) {
 				_st += '[node name="' + nodeName + '" type="Node3D" parent="' + _parent_path+'"]\n';
-				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER* dpiScaleFactor)+','+(-obj.y / PIXELS_PER_METER * dpiScaleFactor)+','+ _z +')\n';
+				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER* dpiScaleFactor)+','+(-obj.y / PIXELS_PER_METER* dpiScaleFactor)+','+ (obj.parent.getChildIndex(obj)+1) * 0.02 * dpiScaleFactor +')\n'
 				_st += 'rotation = Vector3(0, 0, '+ (-GodotExport.getTrueRotationRadians(obj)) +')\n'
-				_st += 'scale = Vector3('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+',1)\n';
+				_st += 'scale = Vector3('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+','+_scaleZ+')\n';
 			} else {
 				_st += '[node name="' + nodeName + '" type="Node2D" parent="' + _parent_path+'"]\n';
 				_st += 'position = Vector2('+Math.ceil(obj.x * dpiScaleFactor)+','+Math.ceil(obj.y * dpiScaleFactor)+')\n'
@@ -788,23 +771,12 @@
 				_scaleZ = -1;
 			}
 
-			var _z = obj.parent.getChildIndex(obj)+1;
-
-			if(obj.parent == GodotExport.rootMovieClip)
-            {
-				_z = obj.parent.getChildIndex(obj) * z_spriteSpace * dpiScaleFactor;
-            }
-			else
-			{
-				_z =  _z * z_spriteSpace * dpiScaleFactor * 0.1;
-			}
-
 			
 			if (sprite3DEnabled) {
 				_st += '[node name="'+nodeName+'" type="Sprite3D" parent="' + _parent_path+'"]\n';
-				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+  ','+ _z +')\n'
+				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+  ','+ 0.02 * dpiScaleFactor +')\n'
 				_st += 'rotation = Vector3(0, 0, '+ GodotExport.getTrueRotationRadians(obj) +')\n';
-				_st += 'scale = Vector3('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+','+ _scaleZ +')\n';
+				_st += 'scale = Vector3('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+','+_scaleZ+')\n';
 				//_st += 'shaded = true\n';
 			} else {
 				_st += '[node name="'+nodeName+'" type="Sprite2D" parent="' + _parent_path+'"]\n';
@@ -969,7 +941,8 @@
 					fs.writeBytes(_png);
 					fs.close();	
 					var _uuid : String = generateUID();
-					var _tex : String = '[ext_resource type="Texture2D" uid="uid://'+ _uuid+'" path="' + _path + '" id="' + _id + '"]\n';
+					_path = outputFolderAnimSt+'/' +_path;
+					var _tex : String = '[ext_resource type="Texture2D" uid="uid://'+ _uuid+'" path="res://' + _path + '" id="' + _id + '"]\n';
 					listTexture.push(_tex);
 				}
 				textureID++;
@@ -1136,22 +1109,6 @@
 				+ 'resource_name = "' + SceneData.currentSceneData.currentScene.name + '"\n'
 				+ 'length = ' + SceneData.currentSceneData.duration+'\n';
 
-			var labels:Array = SceneData.currentSceneData.currentScene.labels;
-			var hasLoopLabel:Boolean = false;
-			for each (var label:FrameLabel in labels)
-			{
-				trace(label.name);
-				if (label.name.indexOf('LOOP') != -1)
-				{
-					hasLoopLabel = true;
-					break;
-				}
-			}
-			if (hasLoopLabel)
-			{
-				listAnimationHeader += "loop_mode = 1\n";
-			}
-
 			_animationData.datas.push(listAnimationHeader);
 			
 			
@@ -1206,18 +1163,6 @@
 					}
 				}
 			}
-			
-			// Process frame labels as method calls
-			for each (var _label:FrameLabel in labels)
-			{
-				if(_label.name.indexOf('LOOP') != -1) continue;
-
-				var labelTime:Number = getTimeFromFrame(SceneData.currentSceneData.startFrame + _label.frame-1);
-				var methodTrack:String = labelToMethodTrack(_label.name, labelTime, _inc);
-				_animationData.datas.push(methodTrack);
-				_inc++;
-			}
-			
 			SceneData.currentSceneData.animationsDataList.push(_animationData);
 		}
 		
@@ -1448,7 +1393,7 @@
 							if (_currentFrameData && _currentFrameData.clip)
 							{
 								if (sprite3DEnabled) {
-									positions.push(_currentFrameData.z  * dpiScaleFactor * z_spriteSpace);
+									positions.push(_currentFrameData.z / PIXELS_PER_METER * dpiScaleFactor*5);
 								}
 							}else{
 								if (sprite3DEnabled) {
@@ -1839,24 +1784,6 @@
 				sprite3DEnabledCheckbox.graphics.lineTo(8, 12);
 				sprite3DEnabledCheckbox.graphics.lineTo(12, 4);
 			}
-		}
-
-		private function labelToMethodTrack(labelName:String, time:Number, trackIndex:int):String {
-			var track:String = 'tracks/' + trackIndex + '/type = "method"\n'
-							+ 'tracks/' + trackIndex + '/imported = false\n'
-							+ 'tracks/' + trackIndex + '/enabled = true\n'
-							+ 'tracks/' + trackIndex + '/path = NodePath("../..")\n'
-							+ 'tracks/' + trackIndex + '/interp = 1\n'
-							+ 'tracks/' + trackIndex + '/loop_wrap = true\n'
-							+ 'tracks/' + trackIndex + '/keys = {\n'
-							+ '"times": PackedFloat32Array(' + time + '),\n'
-							+ '"transitions": PackedFloat32Array(1),\n'
-							+ '"values": [{\n'
-							+ '"args": [],\n'
-							+ '"method": &"' + labelName + '"\n'
-							+ '}]\n'
-							+ '}\n';
-			return track;
 		}
 
 		private function drawDashedRect(sprite:Sprite, x:Number, y:Number, w:Number, h:Number, radius:Number, dashLength:Number, gapLength:Number, color:uint, thickness:Number):void {
