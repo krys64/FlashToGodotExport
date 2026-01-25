@@ -323,6 +323,11 @@
 				}
 			}
 
+			// Fix rotation continuity before generating animation data
+			for each (var detectorItem:TransitionDetector in dictTransitionDetectors) {
+				detectorItem.resolveRotationContinuity();
+			}
+
 			for(var k:int = 0; k < SceneData.allSceneData.length; k++) {
 				SceneData.currentSceneData = SceneData.allSceneData[k];
 				insertAnimationDatas();
@@ -2078,6 +2083,40 @@ internal class TransitionDetector {
 		if (v > 0) return 1;
 		if (v < 0) return -1;
 		return 0;
+	}
+	
+	public function resolveRotationContinuity():void
+	{
+		if (frameData.length < 2) return;
+
+		var prevRot:Number = frameData[0].rotation;
+		// Ensure first frame rotation is valid if it exists
+		if (!frameData[0].exists) prevRot = 0; 
+		else prevRot = frameData[0].rotation;
+
+		for (var i:int = 1; i < frameData.length; i++)
+		{
+			if (frameData[i].exists)
+			{
+				if (frameData[i-1].exists)
+				{
+					var curRot:Number = frameData[i].rotation;
+					var diff:Number = curRot - prevRot;
+					
+					// Normalize diff to [-PI, PI]
+					while (diff <= -Math.PI) diff += 2*Math.PI;
+					while (diff > Math.PI) diff -= 2*Math.PI;
+					
+					frameData[i].rotation = prevRot + diff;
+					prevRot = frameData[i].rotation;
+				}
+				else
+				{
+					// Reset continuity if appearing after a gap
+					prevRot = frameData[i].rotation;
+				}
+			}
+		}
 	}
 	
 	public function getKeyframes():Dictionary 
