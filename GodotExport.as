@@ -1330,6 +1330,10 @@
 
 			var _incFrame : int = 1;
 
+			// Tracking for rotation transitions
+			var lastRotationValue:Number = NaN;
+			var lastTransitionIndex:int = -1;
+
 			for (var i:int = SceneData.currentSceneData.startFrame; i <= SceneData.currentSceneData.endFrame; i++) 
 			{
 				var _frameXExisting =  framesVector1 ? framesVector1.indexOf(i) : -1;
@@ -1382,21 +1386,36 @@
 					switch(_array.toString())
 					{
 						case 'rotation':
+							var godotRotation:Number = 0;
 							if (_currentFrameData && _currentFrameData.clip)
 							{
-								var godotRotation = _currentFrameData.rotation;
+								godotRotation = _currentFrameData.rotation;
 								if (sprite3DEnabled) {
 									positions.push('Vector3(0, 0, ' + (-godotRotation) + ')');
 								} else {
 									positions.push(godotRotation);
 								}
 							}else{
+								godotRotation = 0;
 								if (sprite3DEnabled) {
 									positions.push('Vector3(0, 0, 0)');
 								} else {
 									positions.push(0);
 								}
 							}
+
+							// Handle rotation 180 degree jump easing
+							if (!isNaN(lastRotationValue)) {
+								var diff:Number = Math.abs(godotRotation - lastRotationValue);
+								// If difference is >= 180 degrees (approx 3.14), cut interpolation
+								if (diff > 3.0) {
+									if (lastTransitionIndex != -1 && lastTransitionIndex < transitions.length) {
+										transitions[lastTransitionIndex] = 0;
+									}
+								}
+							}
+							lastRotationValue = godotRotation;
+							lastTransitionIndex = transitions.length;
 							break;
 
 						case 'z_index':
@@ -2087,34 +2106,15 @@ internal class TransitionDetector {
 	
 	public function resolveRotationContinuity():void
 	{
-		if (frameData.length < 2) return;
-
-		var prevRot:Number = frameData[0].rotation;
-		// Ensure first frame rotation is valid if it exists
-		if (!frameData[0].exists) prevRot = 0; 
-		else prevRot = frameData[0].rotation;
-
-		for (var i:int = 1; i < frameData.length; i++)
+		for (var i:int = 0; i < frameData.length; i++)
 		{
 			if (frameData[i].exists)
 			{
-				if (frameData[i-1].exists)
-				{
-					var curRot:Number = frameData[i].rotation;
-					var diff:Number = curRot - prevRot;
-					
-					// Normalize diff to [-PI, PI]
-					while (diff <= -Math.PI) diff += 2*Math.PI;
-					while (diff > Math.PI) diff -= 2*Math.PI;
-					
-					frameData[i].rotation = prevRot + diff;
-					prevRot = frameData[i].rotation;
-				}
-				else
-				{
-					// Reset continuity if appearing after a gap
-					prevRot = frameData[i].rotation;
-				}
+				var r:Number = frameData[i].rotation;
+				// Normalize strictly to [-PI, PI]
+				while (r <= -Math.PI) r += 2*Math.PI;
+				while (r > Math.PI) r -= 2*Math.PI;
+				frameData[i].rotation = r;
 			}
 		}
 	}
