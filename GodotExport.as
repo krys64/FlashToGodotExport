@@ -1,4 +1,4 @@
-﻿package {
+package {
 	import com.adobe.images.PNGEncoder;
 	import flash.display.*;
 	import flash.events.*;
@@ -65,6 +65,8 @@
 		private var atlasEnabled:Boolean = false;
 		private var sprite3DEnabledCheckbox:Sprite;
 		private var sprite3DEnabled:Boolean = false;
+		private var tweeningEnabled:Boolean = true;
+		private var tweeningEnabledCheckbox:Sprite;
 		private var bitmapDataCache:Dictionary = new Dictionary();
 		private var atlasRects:Dictionary;
 
@@ -89,6 +91,7 @@
 				createMarginInputs(); // Creates marginContainer
 				var atlasOptionContainer:Sprite = createAtlasOption(); // Creates atlasContainer
 				var sprite3DOptionContainer:Sprite = create3DOption();
+				var tweeningOptionContainer:Sprite = createTweeningOption();
 				var dpiOptionContainer:Sprite = createDPIOption();
 				createOpenFolderButton(); // Creates openFolderBtn
 
@@ -107,6 +110,10 @@
 				sprite3DOptionContainer.x = leftPanelX;
 				sprite3DOptionContainer.y = currentY;
 				currentY += sprite3DOptionContainer.height + 10;
+
+				tweeningOptionContainer.x = leftPanelX;
+				tweeningOptionContainer.y = currentY;
+				currentY += tweeningOptionContainer.height + 10;
 
 				dpiOptionContainer.x = leftPanelX;
 				dpiOptionContainer.y = currentY;
@@ -1177,10 +1184,14 @@
 
 						var _dictData = getPositionVectorsFromFrame(_clip,_clipName,_propArray);
 					
-						var _data : String ='';
 						var _updateValue = 0;
+						var _interpValue = 1;
+						var _data : String ='';
 
-						if(_propArraySt == 'visible' || _propArraySt == 'z') _updateValue = 1;
+						if(_propArraySt == 'visible' || _propArraySt == 'z' || _propArraySt == 'z_index' || !tweeningEnabled) {
+							_updateValue = 1;
+							_interpValue = 0;
+						}
 
 						var _times =  _dictData['frames'].join(", ");
 
@@ -1195,7 +1206,7 @@
 							+ 'tracks/'+ _inc +'/imported = false\n'
 							+ 'tracks/'+ _inc +'/enabled = true\n'
 							+ 'tracks/'+ _inc +'/path = NodePath("'+_clipName+':'+ _dictGodotPropsName[_propArraySt] +'")\n'
-							+ 'tracks/'+ _inc +'/interp = 1\n'
+							+ 'tracks/'+ _inc +'/interp = ' + _interpValue + '\n'
 							+ 'tracks/'+ _inc +'/loop_wrap = false\n'
 							+ 'tracks/'+ _inc +'/keys = {\n'
 							+ '"times": PackedFloat32Array('+ _times +'),\n'
@@ -1336,8 +1347,8 @@
 
 			for (var i:int = SceneData.currentSceneData.startFrame; i <= SceneData.currentSceneData.endFrame; i++) 
 			{
-				var _frameXExisting =  framesVector1 ? framesVector1.indexOf(i) : -1;
-				var _frameYExisting =  (framesVector2 != null) ? framesVector2.indexOf(i) : -1;
+				var _frameXExisting =  framesVector1 ? framesVector1.indexOf(i - 1) : -1;
+				var _frameYExisting =  (framesVector2 != null) ? framesVector2.indexOf(i - 1) : -1;
 				var _currentFrameData = null;
 				var _index = i-1;
 				var _forceKey = false;
@@ -1865,11 +1876,71 @@
 			}
 		}
 
+		private function createTweeningOption():Sprite {
+			var tweeningContainer:Sprite = new Sprite();
+
+			var labelFormat:TextFormat = new TextFormat("Arial", 14, 0xFFFFFF);
+			labelFormat.bold = true;
+
+			// --- Tweening Checkbox ---
+			var tweeningLabel:TextField = new TextField();
+			tweeningLabel.text = "Enable Tweening";
+			tweeningLabel.setTextFormat(labelFormat);
+			tweeningLabel.autoSize = "left";
+			tweeningLabel.x = 10;
+			tweeningLabel.y = 12;
+			tweeningContainer.addChild(tweeningLabel);
+
+			tweeningEnabledCheckbox = new Sprite();
+			tweeningEnabledCheckbox.graphics.lineStyle(1, 0xFFFFFF);
+			tweeningEnabledCheckbox.graphics.beginFill(0x333333);
+			tweeningEnabledCheckbox.graphics.drawRoundRect(0, 0, 16, 16, 4, 4);
+			tweeningEnabledCheckbox.graphics.endFill();
+			tweeningEnabledCheckbox.x = tweeningLabel.x + tweeningLabel.width + 5;
+			tweeningEnabledCheckbox.y = 12;
+			tweeningEnabledCheckbox.buttonMode = true;
+			tweeningEnabledCheckbox.addEventListener(MouseEvent.CLICK, toggleTweening);
+			tweeningContainer.addChild(tweeningEnabledCheckbox);
+
+			// Cocher par défaut
+			tweeningEnabledCheckbox.graphics.lineStyle(2, 0xFFFFFF);
+			tweeningEnabledCheckbox.graphics.moveTo(4, 8);
+			tweeningEnabledCheckbox.graphics.lineTo(8, 12);
+			tweeningEnabledCheckbox.graphics.lineTo(12, 4);
+
+			var containerWidth:Number = tweeningEnabledCheckbox.x + tweeningEnabledCheckbox.width + 10;
+			var containerHeight:Number = 40;
+
+			tweeningContainer.graphics.beginFill(0x00008B); // Dark blue
+			tweeningContainer.graphics.drawRoundRect(0, 0, containerWidth, containerHeight, 10, 10);
+			tweeningContainer.graphics.endFill();
+
+			addChild(tweeningContainer);
+			return tweeningContainer;
+		}
+
+		private function toggleTweening(e:MouseEvent):void {
+			tweeningEnabled = !tweeningEnabled;
+			
+			tweeningEnabledCheckbox.graphics.clear();
+			tweeningEnabledCheckbox.graphics.lineStyle(1, 0xFFFFFF);
+			tweeningEnabledCheckbox.graphics.beginFill(0x333333);
+			tweeningEnabledCheckbox.graphics.drawRoundRect(0, 0, 16, 16, 4, 4);
+			tweeningEnabledCheckbox.graphics.endFill();
+			
+			if (tweeningEnabled) {
+				tweeningEnabledCheckbox.graphics.lineStyle(2, 0xFFFFFF);
+				tweeningEnabledCheckbox.graphics.moveTo(4, 8);
+				tweeningEnabledCheckbox.graphics.lineTo(8, 12);
+				tweeningEnabledCheckbox.graphics.lineTo(12, 4);
+			}
+		}
+
 		private function labelToMethodTrack(labelName:String, time:Number, trackIndex:int):String {
 			var track:String = 'tracks/' + trackIndex + '/type = "method"\n'
 							+ 'tracks/' + trackIndex + '/imported = false\n'
 							+ 'tracks/' + trackIndex + '/enabled = true\n'
-							+ 'tracks/' + trackIndex + '/path = NodePath("../..")\n'
+							+ 'tracks/' + trackIndex + '/path = NodePath("../../..")\n'
 							+ 'tracks/' + trackIndex + '/interp = 1\n'
 							+ 'tracks/' + trackIndex + '/loop_wrap = true\n'
 							+ 'tracks/' + trackIndex + '/keys = {\n'
