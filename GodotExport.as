@@ -759,6 +759,7 @@ package {
 				_st += 'position = Vector2('+Math.ceil(obj.x * dpiScaleFactor)+','+Math.ceil(obj.y * dpiScaleFactor)+')\n'
 				_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n'
 				_st += 'scale = Vector2('+ convertToTwoDecimal(_scaleX) +','+convertToTwoDecimal(_scaleY)+')\n';
+				_st += 'skew = '+ GodotExport.getSkew(obj) +'\n';
 			}
 			//_st += 'scale = Vector2('+Math.ceil(obj.scaleX)+','+Math.ceil(obj.scaleY)+')\n'
 
@@ -823,6 +824,7 @@ package {
 				_st += 'position = Vector2('+Math.ceil(_posXFinal)+','+Math.ceil(_posYFinal)+')\n';
 				_st += 'rotation = '+ GodotExport.getTrueRotationRadians(obj) +'\n';
 				_st += 'scale = Vector2('+Math.abs(_scale.x)+','+Math.abs(_scale.y)+')\n';
+				_st += 'skew = '+ GodotExport.getSkew(obj) +'\n';
 			}
 			_st += 'flip_h = '+ (_scale.x < 0)+'\n';
 			if (atlasEnabled) {
@@ -1107,6 +1109,7 @@ package {
 					['x','y'],
 					['scaleX','scaleY'],
 					['rotation'],
+					['skew'],
 					//['alpha'],
 					['visible'],
 					['z_index']
@@ -1130,6 +1133,7 @@ package {
 					'x,y': 'position',
 					'scaleX,scaleY' : 'scale',
 					'rotation' : 'rotation',
+					'skew' : 'skew',
 					'alpha' : 'alpha',
 					'visible' : 'visible',
 					'z_index' : 'z_index'
@@ -1276,6 +1280,18 @@ package {
 			radians -= Math.PI;
 
 			return radians;
+		}
+
+		public static function getSkew(obj:DisplayObject):Number {
+			var m:Matrix = obj.transform.matrix;
+			var rot:Number = getTrueRotationRadians(obj);
+			var skew:Number = Math.atan2(-m.c, m.d) - rot;
+
+			// Normaliser entre -π et π
+			while (skew <= -Math.PI) skew += 2 * Math.PI;
+			while (skew > Math.PI) skew -= 2 * Math.PI;
+
+			return skew;
 		}
 
 		
@@ -1427,6 +1443,15 @@ package {
 							}
 							lastRotationValue = godotRotation;
 							lastTransitionIndex = transitions.length;
+							break;
+
+						case 'skew':
+							if (_currentFrameData && _currentFrameData.clip)
+							{
+								positions.push(_currentFrameData.skew);
+							}else{
+								positions.push(0);
+							}
 							break;
 
 						case 'z_index':
@@ -2063,6 +2088,7 @@ internal class FrameData {
 	public var scaleX:Number;
 	public var scaleY:Number;
 	public var rotation:Number;
+	public var skew:Number;
 	public var alpha:Number;
 	public var z_index:int = 0;
 	public var visible:Boolean;
@@ -2089,6 +2115,7 @@ internal class FrameData {
 				width : clip.width,
 				height : clip.height,
 				rotation : GodotExport.getTrueRotationRadians(clip),
+				skew : GodotExport.getSkew(clip),
 				scaleX : GodotExport.getSignedScale(clip).x,
 				scaleY : GodotExport.getSignedScale(clip).y
 			}
@@ -2115,6 +2142,7 @@ internal class FrameData {
 			this.scaleX = _datas.scaleX;
 			this.scaleY = _datas.scaleY;
 			this.rotation = _datas.rotation;
+			this.skew = _datas.skew;
 			this.alpha = clip.alpha;
 			this.visible = clip.visible;
 			this.width = _datas.width;
@@ -2192,7 +2220,7 @@ internal class TransitionDetector {
 	
 	public function getKeyframes():Dictionary 
 	{
-		var props:Array = ["x","y","z","scaleX","scaleY","rotation","alpha","visible","exists","width","height","z_index"];
+		var props:Array = ["x","y","z","scaleX","scaleY","rotation","skew","alpha","visible","exists","width","height","z_index"];
 		var result:Dictionary = new Dictionary();
 
 		if (frameData.length == 0) return result;
@@ -2226,7 +2254,7 @@ internal class TransitionDetector {
 				{
 					diff = Math.round((cur -prev)*100) ;
 				}
-				else if(p == 'rotation')
+				else if(p == 'rotation' || p == 'skew')
 				{
 					var _cur = GodotExport.convertToTwoDecimal(cur);
 					var _prev = GodotExport.convertToTwoDecimal(prev);
