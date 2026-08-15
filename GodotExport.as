@@ -76,7 +76,7 @@ package {
 		private var dpiScaleFactor:Number = exportDPI / baseDPI; // Facteur d'échelle pour le DPI
 		private var dpiInput:TextField;
 
-		public static var z_spriteSpace = 0.02;
+		public static var z_spriteSpace = 0.04;
 		
 		public function GodotExport() {
 			if (File.desktopDirectory) {
@@ -749,15 +749,10 @@ package {
 				_scaleZ = -1;
 			}
 
-			var _z = obj.parent.getChildIndex(obj)+1;
-
-			if(obj.parent == GodotExport.rootMovieClip)
-            {
-				_z = obj.parent.getChildIndex(obj) * z_spriteSpace;
-            }
-			else
+			var _z : Number = 0;
+			if (obj.parent != null)
 			{
-				_z =  _z * z_spriteSpace * 0.01;
+				_z = obj.parent.getChildIndex(obj) * z_spriteSpace;
 			}
 
 			var sX:Number = convertToTwoDecimal(_scaleX);
@@ -818,15 +813,10 @@ package {
 				_scaleZ = -1;
 			}
 
-			var _z = obj.parent.getChildIndex(obj)+1;
-
-			if(obj.parent == GodotExport.rootMovieClip)
-            {
-				_z = obj.parent.getChildIndex(obj) * z_spriteSpace;
-            }
-			else
+			var _z : Number = 0;
+			if (obj.parent != null)
 			{
-				_z =  _z * z_spriteSpace * 0.1;
+				_z = obj.parent.getChildIndex(obj) * z_spriteSpace;
 			}
 
 			
@@ -2198,10 +2188,13 @@ internal class FrameData {
 				_datas.scaleY = Math.abs(_datas.scaleY);
 			}
 
+            if (clip.parent != null)
+            {
+                this.z = clip.parent.getChildIndex(clip);
+            }
             if(clip.parent != null && clip.parent == GodotExport.rootMovieClip)
             {
                 this.z_index = clip.parent.getChildIndex(clip);
-				this.z = clip.parent.getChildIndex(clip);
             }
 
 			this.x = _datas.x;
