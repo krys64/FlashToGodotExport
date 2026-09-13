@@ -820,7 +820,7 @@ package {
 			{
 				_st += '[node name="' + nodeName + '" type="Node3D" parent="' + _parent_path+'"]\n';
 				_st += 'position = Vector3('+(obj.x / PIXELS_PER_METER * dpiScaleFactor)+','+(-obj.y / PIXELS_PER_METER * dpiScaleFactor)+','+ _z * dpiScaleFactor +')\n';
-				_st += 'rotation = Vector3(0, 0, '+ (-GodotExport.getTrueRotationRadians(obj)) +')\n'
+				_st += 'quaternion = '+ GodotExport.getQuaternionString(-GodotExport.getTrueRotationRadians(obj)) +'\n'
 				_st += 'scale = Vector3('+ sX +','+ sY +',1)\n';
 			} else {
 				_st += '[node name="' + nodeName + '" type="Node2D" parent="' + _parent_path+'"]\n';
@@ -884,7 +884,7 @@ package {
 			if (sprite3DEnabled) {
 				_st += '[node name="'+nodeName+'" type="Sprite3D" parent="' + _parent_path+'"]\n';
 				_st += 'position = Vector3('+(_posXFinal / PIXELS_PER_METER)+','+(-_posYFinal / PIXELS_PER_METER)+  ','+ _z * dpiScaleFactor +')\n'
-				_st += 'rotation = Vector3(0, 0, '+ GodotExport.getTrueRotationRadians(obj) +')\n';
+				_st += 'quaternion = '+ GodotExport.getQuaternionString(GodotExport.getTrueRotationRadians(obj)) +'\n';
 				_st += 'scale = Vector3('+sX+','+sY+','+ _scaleZ +')\n';
 				//_st += 'shaded = true\n';
 			} else {
@@ -1276,7 +1276,8 @@ package {
 							if(element === 0) _dictData['values'][i] = '0.0';
 						}
 
-						_data += 'tracks/'+ _inc +'/type = "value"\n'
+						var _trackType:String = 'value';
+						_data += 'tracks/'+ _inc +'/type = "'+ _trackType +'"\n'
 							+ 'tracks/'+ _inc +'/imported = false\n'
 							+ 'tracks/'+ _inc +'/enabled = true\n'
 							+ 'tracks/'+ _inc +'/path = NodePath("'+ clipPaths[_clipName] +':'+ _dictGodotPropsName[_propArraySt] +'")\n'
@@ -1351,6 +1352,13 @@ package {
 			radians -= Math.PI;
 
 			return radians;
+		}
+
+		public static function getQuaternionString(_angleRadians:Number):String {
+			var _half:Number = _angleRadians * 0.5;
+			var _z:Number = Math.sin(_half);
+			var _w:Number = Math.cos(_half);
+			return 'Quaternion(0, 0, ' + _z.toFixed(6) + ', ' + _w.toFixed(6) + ')';
 		}
 
 		public static function getSkew(obj:DisplayObject):Number {
@@ -1489,7 +1497,7 @@ package {
 							{
 								godotRotation = _currentFrameData.rotation;
 								if (sprite3DEnabled) {
-									positions.push('Vector3(0, 0, ' + (-godotRotation) + ')');
+									positions.push('Vector3(0, 0, '+ (-godotRotation) +')');
 								} else {
 									positions.push(godotRotation);
 								}
@@ -2325,15 +2333,21 @@ internal class TransitionDetector {
 	
 	public function resolveRotationContinuity():void
 	{
+		// Déroule (unwrap) les angles au lieu de les normaliser dans [-π, π] :
+		// on ajoute/retire 2π pour garder chaque écart entre frames < π, ce qui
+		// supprime les sauts ±π (et donc les demi-tours à l'interpolation).
+		var prev:Number = NaN;
 		for (var i:int = 0; i < frameData.length; i++)
 		{
 			if (frameData[i].exists)
 			{
 				var r:Number = frameData[i].rotation;
-				// Normalize strictly to [-PI, PI]
-				while (r <= -Math.PI) r += 2*Math.PI;
-				while (r > Math.PI) r -= 2*Math.PI;
+				if (!isNaN(prev)) {
+					while (r - prev > Math.PI) r -= 2*Math.PI;
+					while (r - prev < -Math.PI) r += 2*Math.PI;
+				}
 				frameData[i].rotation = r;
+				prev = r;
 			}
 		}
 	}
